@@ -1,0 +1,113 @@
+---
+title: "20221030_Export_Forecast_with_R"
+author: "Felipe Tufaile, Vinicius de Camargo, Helena Funari, Rodrigo Zamengo"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+### R Markdown
+
+
+```{r configs, echo=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, include = TRUE, message = FALSE)
+```
+
+### Including Plots
+
+You can also embed plots, for example:
+
+```{r libraries}
+
+## Set working directory
+setwd("~/Insper/Commodity_Export_Forecast")
+
+library(dplyr)
+library(tidyverse)
+library(ggthemes)
+```
+### Defining Functions
+
+```{r functions}
+
+## Creating function for adding time series to ggplots
+add_serie <- function(data, xdata, ydata, name, color, text_position, labels) {
+
+  list(geom_line(data=data, aes(x=.data[[xdata]], y=.data[[ydata]], color=name), linetype="solid", alpha=0.8),
+       geom_text(data=data, aes(x=.data[[xdata]], y=.data[[ydata]], label=.data[[labels]]),
+                 colour = color,
+                 size=2.5, 
+                 vjust=ifelse(text_position=="Above", -1, 2), hjust=0.5))
+}
+
+## Defining custom x-labels for time series plot without lag
+time_series_xlabels <- function(){
+  scale_x_date(breaks=seq(from=as.Date("1997-01-01"), to=as.Date("2022-01-01"), by = "12 month"), 
+               date_label = "%b\n%y", expand=expansion(mult = c(0.02, 0.02)))
+}
+
+## Defining custom themes
+time_series_theme <- function(){
+  theme_hc() +
+  theme(plot.background = element_rect(fill = "white"),
+        panel.background = element_rect(fill = "white"),
+        panel.grid.major.y = element_line(colour = '#E6E7E8'),
+        panel.grid.minor.y = element_line(colour = '#E6E7E8'),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank(),
+        axis.line.y = element_line(colour = '#000000'),
+        axis.line.x = element_line(colour = '#000000'),
+        axis.text.y = element_text(colour = '#000000', size=8),
+        axis.ticks.y = element_line(colour = '#000000'),
+        axis.title.y = element_text(colour = '#000000', size=8),
+        legend.position = "bottom",
+        plot.title = element_text(colour = "#000000", size=14),
+        plot.subtitle = element_text(colour = '#585858', size=12),
+        text = element_text(colour = '#585858', size=9),
+        axis.text = element_text(colour = '#585858', size=8))
+  }
+```
+
+
+### Data Loading
+
+```{r loading_dataset}
+# Reading export dataset
+export <- read_csv("export_database.csv")
+
+# Selecting soy bean production in midwest
+midwest_soybean <- export %>% 
+  filter(produto == 'COMPLEXO SOJA' & regiao == 'CENTRO-OESTE' & ref_ano >= 2000 & ref_ano <= 2021) %>%
+  group_by(ref_date_fmd, ref_ano, ref_mes_nm, ref_mes_nr) %>%
+  summarize(vl_mm_ton = sum(massa_exportada_kg)/10^9)
+
+```
+
+
+### Plotting time-series
+
+```{r plotting_series_01, out.width="100%"}
+## Plotting
+plot <- ggplot() +
+  add_serie(data=midwest_soybean %>% mutate(labels = ""), 
+            xdata="ref_date_fmd", 
+            ydata="vl_mm_ton", 
+            name='Soy Bean Export', 
+            color="#009491", 
+            text_position="Above", 
+            labels="labels") +
+  #geom_vline(xintercept = as.Date('2018-01-01'), linetype="dashed", color = "#000000", size=0.1) +
+  #geom_vline(xintercept = as.Date('2019-01-01'), linetype="dashed", color = "#000000", size=0.1) +
+  #geom_vline(xintercept = as.Date('2020-01-01'), linetype="dashed", color = "#000000", size=0.1) +
+  #geom_vline(xintercept = as.Date('2021-01-01'), linetype="dashed", color = "#000000", size=0.1) +
+  #geom_vline(xintercept = as.Date('2022-01-01'), linetype="dashed", color = "#000000", size=0.1) +
+  scale_color_manual(name="", breaks=c('Soy Bean Export'), values=c('#009491')) +
+  time_series_xlabels() +
+  #scale_y_continuous(limits=c(0, 10), breaks=seq(0, 10, 1), minor_breaks=seq(0, 10, 0.5)) +
+  labs(x = "", 
+       y = "Soy Bean Export (MM Ton)",
+       title="Soy Bean Export in Midwest of Brazil from Jan-2000 to Dec-2021",
+       subtitle="") +
+  time_series_theme()
+
+plot
+```
