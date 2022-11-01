@@ -1,0 +1,635 @@
+
+---
+title: "20221015 - Forecasting"
+output:
+  html_document:
+    toc: true
+---
+
+
+```{r}
+%md
+#### Exercise 1
+
+
+Do a descritptive anaysis using the the time serie in this link:\
+https://raw.githubusercontent.com/padsInsper/202234-fa/main/material/lab01/serie_temporal.csv
+\ 
+
+**1.** Plot the time series\
+**2.** Plot seasonal charts\
+**3.** Decomposing the time series\
+**4.** Test for **unit root**\
+**5.** Prediction using prophet\
+**6.** Plot ACF and PACF\
+**7.** Create a ARIMA model\
+**8.** Perform a ljung box test in the residuals
+```
+
+
+```{r}
+%md
+**Loading libraries**
+```
+
+
+```{r}
+## Istalling packages
+ install.packages("fpp3") # library with time-series dataset
+ install.packages("tseries") # library with kpss test
+ install.packages("forecast")
+ install.packages("xts")
+ install.packages("prophet")
+
+# Loading packages
+library(fpp3) ## library with time-series dataset
+library(tseries) ## performing test analysis in time series 
+library(readr) ## read databases using r
+library(forecast) ## library used for predicting with time series
+library(xts) ## library to work with time series objects (similar to ts() from base R)
+library(prophet) ## library for making forecasts using time series
+```
+
+
+```{r}
+%md
+**Reading dataset**
+```
+
+
+```{r}
+## Database | Reading dataset from github
+series <- read_csv("https://raw.githubusercontent.com/padsInsper/202234-fa/main/material/lab01/serie_temporal.csv",
+                   show_col_types=FALSE)
+```
+
+
+```{r}
+%md
+##### 1.1 Plotting the time series
+```
+
+
+```{r}
+series %>%
+  summary()
+```
+
+
+```{r}
+%md
+
+**There are several packages used to store time series in R. For example:**
+
+- `{base}`: it is possible to do a lot only with base/stats;
+
+- `{xts}` / `{zoo}`: it is used to organize a dataset in a time series structure;
+
+- `{tsibble}`: it is the *tidy* version for time series, more recent (2017).
+```
+
+
+```{r}
+%md
+**R base**
+```
+
+
+```{r}
+## Converting the time series into a time series (ts) object 
+ts_series <- ts(data=series$y, # selecting serie
+                start=c(2000, 1, 1), # start date
+                end=c(2022, 5, 31), # end date 
+                frequency=365 # considering a daily frequency
+               )
+
+# Configure graph figure size
+options(repr.plot.width=1600, repr.plot.height=500)
+
+## Creating an autoplot
+autoplot(ts_series) +
+  labs(y="Y-value", title="Dummy Time Series")
+```
+
+
+```{r}
+## Using autplot from forcast
+forecast::autoplot(ts_series) +
+  ggplot2::theme_minimal()
+
+# Configure graph figure size
+options(repr.plot.width=1600, repr.plot.height=500)
+```
+
+
+```{r}
+%md
+**XTS**
+```
+
+
+```{r}
+%md
+**xts** is an enhanced version of ts(), build in order to overcome some of the limitations of ts(). It gained a lot of popularity between 2000 and 2015 and it is used as base for serveral models. Now a days, **xts** is not necessary in order to work with time series. However, it is very common to find it in base codes, built by people that have learnd R with base R.
+```
+
+
+```{r}
+%md
+**TSIBBLE**
+```
+
+
+```{r}
+%md
+**tsibbles** are the *tidy* implementation / *tibble* version for time series.\
+Documentation: https://cran.r-project.org/web/packages/tsibble/tsibble.pdf
+```
+
+
+```{r}
+## Grouping the information WEEKLY
+weekly_series_tsibble <- series %>% 
+  dplyr::mutate(week = tsibble::yearweek(ds, week_start = getOption("lubridate.week.start", 1))) %>%
+  dplyr::select(-ds) %>%
+  dplyr::group_by(week) %>%
+  dplyr::summarize(y=sum(y)) %>%
+  dplyr::ungroup() %>%
+  tsibble::as_tsibble(index = week) %>%
+  tsibble::filter_index("2000 W01" ~ "2022 W21")
+
+## printing the tsibble
+weekly_series_tsibble
+```
+
+
+```{r}
+## Plotting using feasts library from fpp3
+feasts::autoplot(weekly_series_tsibble, y)
+```
+
+
+```{r}
+## Grouping the information MONTHLY
+monthly_series_tsibble <- series %>% 
+  dplyr::mutate(month = tsibble::yearmonth(ds)) %>%
+  dplyr::select(-ds) %>%
+  dplyr::group_by(month) %>%
+  dplyr::summarize(y=sum(y)) %>%
+  dplyr::ungroup() %>%
+  tsibble::as_tsibble(index = month)
+
+## printing the tsibble
+monthly_series_tsibble
+```
+
+
+```{r}
+## Plotting using feasts library from fpp3
+feasts::autoplot(monthly_series_tsibble, y)
+```
+
+
+```{r}
+%md
+##### 1.2. Plotting seasonal charts
+```
+
+
+```{r}
+%md
+**Using library feasts**
+
+**Feasts** is the currently package for descriptive analysis of time series. It is described in FPP3 (https://otexts.com/fpp3/) and is aligned with *tidy* principles.
+```
+
+
+```{r}
+## Plotting monthly seasonal chart using library feasts | Cartesian view
+monthly_series_tsibble %>% 
+  feasts::gg_season(y=y)
+```
+
+
+```{r}
+## Plotting monthly seasonal chart using library feasts | Polar view
+monthly_series_tsibble %>% 
+  feasts::gg_season(y=y, polar=TRUE)
+```
+
+
+```{r}
+%md
+**Using library forecast**
+
+The **forecast** package is one of the most used in day-to-day activities for those who work with time series. It was built before tidymodels and is a package to deal with several types of models related to time series, however, outside the *tidy* environment. The base text book used for forecast is the FPP2 book (https://otexts.com/fpp2/). Currently, there is the FPP3 version with “tidy” versions.
+```
+
+
+```{r}
+## Aggregating information monthly
+series_monthly <- series %>%
+  dplyr::mutate(month = tsibble::yearmonth(ds)) %>%
+  dplyr::select(-ds) %>%
+  dplyr::group_by(month) %>%
+  dplyr::summarize(y=sum(y)) %>%
+  dplyr::ungroup()
+
+## Converting the time series into a time series (ts) object 
+ts_series_monthly <- ts(data=series_monthly$y, # selecting serie
+                        start=c(2000, 1), # start date
+                        end=c(2022, 5), # end date 
+                        frequency=12 # considering a daily frequency
+                       )
+```
+
+
+```{r}
+## Plotting monthly seasonal chart using library feasts | Cartesian view
+forecast::ggseasonplot(ts_series_monthly)
+```
+
+
+```{r}
+## Plotting monthly seasonal chart using library feasts | Polar view
+forecast::ggseasonplot(ts_series_monthly, polar=TRUE)
+```
+
+
+```{r}
+%md
+##### 1.3. Decomposing the time series
+```
+
+
+```{r}
+%md
+**Base R | Additive decomposition**
+```
+
+
+```{r}
+## Decomposing using base R
+ts_series_monthly_comp_add <- decompose(ts_series_monthly, "additive")
+plot(ts_series_monthly_comp_add)
+
+# Configure graph figure size
+options(repr.plot.width=1600, repr.plot.height=600)
+```
+
+
+```{r}
+%md
+**Base R | Multiplicative decomposition**
+```
+
+
+```{r}
+## Decomposing using base R
+ts_series_monthly_comp_mult <- decompose(ts_series_monthly, "multiplicative")
+plot(ts_series_monthly_comp_mult)
+
+# Configure graph figure size
+options(repr.plot.width=1600, repr.plot.height=600)
+```
+
+
+```{r}
+%md
+**Forecast**
+
+For decomposing a time series, **forecast** uses the **ETS** model on top of **ts()** objects.
+- level -> trend;
+- slope -> random;
+- season -> seasonal;
+```
+
+
+```{r}
+## Using ETS model from forecast
+fit_ets <- forecast::ets(ts_series_monthly)
+forecast::autoplot(fit_ets)
+```
+
+
+```{r}
+%md
+**Feast and fabletools**
+
+In order to decompose the time series, **feasts** uses the model **STL** and the components are calculated by **fabletools**.
+```
+
+
+```{r}
+## Decomposing the dataset using feasts
+monthly_series_tsibble %>% 
+  fabletools::model(feasts::STL(y)) %>% 
+  fabletools::components()
+```
+
+
+```{r}
+%md
+##### 1.4. Test for unit root
+```
+
+
+```{r}
+%md
+**Unit root test** verifies whether or not a time series has a unit root, meaning **it is not stationary**.\
+One of the tests that verifies that is the Augmented Dickey-Fuller test or **ADF test** wich has the following hypothesis:
+
+- H0: Not stationary
+- H1: Stationary / Explosive
+
+Another test used is the **Kwiatkowski-Phillips-Schmidt-Shin (KPSS) test**. In this test, the null hypothesis is that the data are stationary, and we look for evidence that the null hypothesis is false. Consequently, small p-values (e.g., less than 0.05) suggest that differencing is required. The test can be computed using the unitroot_kpss() function. The  hypothesis are:
+
+- H0: Stationary
+- H1: Not Stationary
+
+The **kpss** test can be found in fabletools package.
+```
+
+
+```{r}
+## Using the tsibble time series object
+monthly_series_tsibble %>%
+  ## mutate(dy1 = difference(y)) %>% -> In case we need to apply differencing
+  fabletools::features(.tbl=., .var=y, features=list(unitroot_kpss, unitroot_ndiffs))
+```
+
+
+```{r}
+%md
+As the **kpss_pvalue** is greather than 0.05 in the previous test we fail to reject the null hypothesis which stated that the time series is stationary (in other words we accept the null hypothesis). Therefore, we conclude that the time series is stationary (**has no unit root**). We don't need to apply differencing in the original time series. The other thing is that the **unitroot_ndiffs** return the number of differencing multiples that have to be performed in the time series through the variable **ndiffs**.
+
+Obs.: We remove stochastic tendency (when the time series has unit root) by differencing the time series. Our objective it to be left only with white noise.
+```
+
+
+```{r}
+## Aplying the ADF test
+tseries::adf.test(x=ts_series_monthly)
+```
+
+
+```{r}
+%md
+If we look at the **ADF test** above, it suggest that the time series is actually **non-stationary**: p-value greater than 0.05 so we fail to reject the null hypothesis (we accept it) wich stated that the time series is not stationary. In fact, if applied 1 order differencing (see cell bellow) we see that we are able to get a p-value lower than 0.05 (we remove that stochastic tendency).
+```
+
+
+```{r}
+## Aplying the ADF test
+tseries::adf.test(x=diff(ts_series_monthly))
+```
+
+
+```{r}
+%md
+Since each test shows different conclusion about the time series being stationary, the series might be in the limiar between being a stationary series.
+```
+
+
+```{r}
+%md
+##### 1.5. Prediction using prophet
+```
+
+
+```{r}
+%md
+**Prophet** is a procedure for forecasting time series data based on an additive model where non-linear trends are fit with yearly, weekly, and daily seasonality, plus holiday effects. It works best with time series that have strong seasonal effects and several seasons of historical data. **Prophet** is robust to missing data and shifts in the trend, and typically handles outliers well.
+Prophet is open source software released by Facebook’s Core Data Science team. It is available for download on CRAN and PyPI.
+
+Documentation: https://facebook.github.io/prophet/ \
+Documentation in CRAN: https://cran.r-project.org/web/packages/prophet/prophet.pdf
+```
+
+
+```{r}
+%md
+We call the prophet function to fit the model. The first argument is the historical dataframe. Additional arguments control how Prophet fits the data. The ds column should be YYYY-MM-DD for a date, or YYYY-MM-DD HH:MM:SS for a timestamp. As above, we use here the log number of views to Peyton Manning’s Wikipedia page.
+```
+
+
+```{r}
+m <- prophet(series)
+```
+
+
+```{r}
+%md
+The **make_future_dataframe** function takes the model object and a number of periods to forecast and produces a suitable dataframe. By default it will also include the historical dates so we can evaluate in-sample fit.
+```
+
+
+```{r}
+future <- make_future_dataframe(m, periods = 365)
+tail(future)
+```
+
+
+```{r}
+%md
+
+The forecast object is a dataframe with a column yhat containing the forecast. It has additional columns for uncertainty intervals and seasonal components.
+```
+
+
+```{r}
+forecast <- predict(m, future)
+tail(forecast[c('ds', 'yhat', 'yhat_lower', 'yhat_upper')])
+```
+
+
+```{r}
+%md
+You can use the generic plot function to plot the forecast, by passing in the model and the forecast dataframe.
+```
+
+
+```{r}
+plot(m, forecast)
+```
+
+
+```{r}
+%md
+You can use the **prophet_plot_components** function to see the forecast broken down into **trend**, **weekly seasonality**, and **yearly seasonality**.
+```
+
+
+```{r}
+prophet_plot_components(m, forecast)
+```
+
+
+```{r}
+%md
+An interactive plot of the forecast using Dygraphs can be made with the command **dyplot.prophet(m, forecast)**.
+```
+
+
+```{r}
+dyplot.prophet(m, forecast)
+```
+
+
+```{r}
+%md
+##### 1.6. Plot ACF and PACF
+```
+
+
+```{r}
+%md
+**ACF (auto-correlation function)** calculates the correlation between the time series against a lagged version of itself. For lag equals to 0 than the correlation of a time series against itself will always be 1. As we increase the lag, the auto-correlation magnitude tends to decrease. If that decrease is slow, than it means that the time series might not bet stationary and has stochastic tendency / it is auto-corrlated.
+```
+
+
+```{r}
+%md
+The graph bellowe suggests that the time series is not stationary since the auto-correlation term slowly decreases, accordingly with the result obtained with the **adf** test. However the **kpss** test peformed previously suggests the opposite. 
+```
+
+
+```{r}
+acf(ts_series_monthly)
+```
+
+
+```{r}
+%md
+After differencing the time series, the **acf** plot becomes:
+
+Obs.: Differencing:
+
+$$
+  dy_{t} = y_{t} - y_{t-1}
+$$
+```
+
+
+```{r}
+acf(diff(ts_series_monthly))
+```
+
+
+```{r}
+%md
+**PACF (partial auto-correlation function)** calculates the correlation between the time series against a lagged version of itself. However, differently from **acf** we remove the effect of previous lags in the correlation of the actual lag being analyzed. For lag equals to 0 than the correlation of a time series against itself will always be 1. As we increase the lag, the partial auto-correlation magnitude tends to decrease. It is important to notice that the pacf plot of **stats** package doesnt show the lag 0 correlation (which is equal to 1).
+```
+
+
+```{r}
+pacf(diff(ts_series_monthly))
+```
+
+
+```{r}
+## Another implementation option using tsibble and feasts
+monthly_series_tsibble %>%
+  feasts::gg_tsdisplay(difference(y), plot_type='partial')
+```
+
+
+```{r}
+%md
+##### 1.7. Create a ARIMA model
+```
+
+
+```{r}
+%md
+
+Looking at the pacf and acf plot, as well as knowing that the model would require 1 differencing, the parameters **p, d and q** would be:
+
+- p = 3 (two bars outside the confidence interval + bar at 0 in pacf plot);
+- d = 1 from adf test;
+- q = 3 (two bars outside the confidence interval + bar at 0 in acf plot);
+
+However in order to facilitate configuring the hyper-parameters **p, d and q**, let us use the auto_arima function from feats package.
+
+The ARIMA() function in the fable package uses a variation of the Hyndman-Khandakar algorithm (Hyndman & Khandakar, 2008), which combines unit root tests, minimisation of the AICc and MLE to obtain an ARIMA model. The arguments to ARIMA() provide for many variations on the algorithm. What is described here is the default behaviour.
+```
+
+
+```{r}
+## Fitting models
+fit_models <- monthly_series_tsibble %>%
+  model(arima310 = ARIMA(y ~ pdq(3,1,0)),
+        arima013 = ARIMA(y ~ pdq(0,1,3)),
+        stepwise = ARIMA(y),
+        search = ARIMA(y, stepwise=FALSE))
+```
+
+
+```{r}
+## Pivoting result table
+fit_models %>%
+  mutate(index="Arima Model") %>%
+  pivot_longer(!index, names_to = "Model name", values_to = "Orders") %>%
+  select(-index)
+```
+
+
+```{r}
+## Assessing the models using AIC and BIC
+glance(fit_models) %>% 
+  arrange(AICc) %>% 
+  select(.model:BIC)
+```
+
+
+```{r}
+%md
+
+Looking at the results we can see that model **arima310** has the best (lowest) AICc and BIC. 
+```
+
+
+```{r}
+%md
+
+The ACF plot of the residuals from the ARIMA(3,1,0) model shows that all autocorrelations are within the threshold limits, indicating that the residuals are **behaving like white noise**. We notice that the residuals have 0 mean and a distribution that seems to be normal.
+```
+
+
+```{r}
+## Plotting residuals
+fit_models %>%
+  select(arima310) %>%
+  gg_tsresiduals()
+```
+
+
+```{r}
+%md
+
+##### 1.8. Perform a Ljung-Box test in the residuals
+```
+
+
+```{r}
+%md
+Ljung-Box returns a large p-value (we fail to reject the null hypothesis), also suggesting that the residuals are **white noise**.\
+Ljung-Box hypothesis:
+
+- H0: The residuals **behave like white noise**;
+- H1: The residuals **do not behave like white noise**;
+```
+
+
+```{r}
+## Ljung-Box test in the residuals
+augment(fit_models) %>%
+  filter(.model=='arima310') %>%
+  features(.innov, ljung_box, lag = 10, dof = 3)
+```
+
+
+```{r}
+
+```
+

@@ -24,6 +24,8 @@ setwd("~/Insper/Commodity_Export_Forecast")
 library(dplyr)
 library(tidyverse)
 library(ggthemes)
+library(fpp3)
+library(forecast)
 ```
 ### Defining Functions
 
@@ -77,7 +79,7 @@ export <- read_csv("export_database.csv")
 # Selecting soy bean production in midwest
 midwest_soybean <- export %>% 
   filter(produto == 'COMPLEXO SOJA' & regiao == 'CENTRO-OESTE' & ref_ano >= 2000 & ref_ano <= 2021) %>%
-  group_by(ref_date_fmd, ref_ano, ref_mes_nm, ref_mes_nr) %>%
+  group_by(ref_date_fmd) %>%
   summarize(vl_mm_ton = sum(massa_exportada_kg)/10^9)
 
 ```
@@ -95,14 +97,9 @@ plot <- ggplot() +
             color="#009491", 
             text_position="Above", 
             labels="labels") +
-  #geom_vline(xintercept = as.Date('2018-01-01'), linetype="dashed", color = "#000000", size=0.1) +
-  #geom_vline(xintercept = as.Date('2019-01-01'), linetype="dashed", color = "#000000", size=0.1) +
-  #geom_vline(xintercept = as.Date('2020-01-01'), linetype="dashed", color = "#000000", size=0.1) +
-  #geom_vline(xintercept = as.Date('2021-01-01'), linetype="dashed", color = "#000000", size=0.1) +
-  #geom_vline(xintercept = as.Date('2022-01-01'), linetype="dashed", color = "#000000", size=0.1) +
   scale_color_manual(name="", breaks=c('Soy Bean Export'), values=c('#009491')) +
   time_series_xlabels() +
-  #scale_y_continuous(limits=c(0, 10), breaks=seq(0, 10, 1), minor_breaks=seq(0, 10, 0.5)) +
+  scale_y_continuous(limits=c(0, 10), breaks=seq(0, 10, 1), minor_breaks=seq(0, 10, 0.5)) +
   labs(x = "", 
        y = "Soy Bean Export (MM Ton)",
        title="Soy Bean Export in Midwest of Brazil from Jan-2000 to Dec-2021",
@@ -110,4 +107,87 @@ plot <- ggplot() +
   time_series_theme()
 
 plot
+```
+
+
+### Applying a boxcox transformation on the time-series
+
+```{r boxcox, out.width="100%"}
+## Calculating boxcox transformation on vl_mm_ton
+boxcox_transform <- BoxCox(midwest_soybean$vl_mm_ton, lambda = "auto")
+
+## Creating a new tibble with the transformed vl_mm_ton value
+midwest_soybean_boxcox <- tibble(ref_date_fmd = midwest_soybean$ref_date_fmd,
+                                 vl_mm_ton_boxcox = c(boxcox_transform))
+
+## Plotting
+plot <- ggplot() +
+  add_serie(data=midwest_soybean_boxcox %>% mutate(labels = ""), 
+            xdata="ref_date_fmd", 
+            ydata="vl_mm_ton_boxcox", 
+            name="Soy Bean Export", 
+            color="#009491", 
+            text_position="Above", 
+            labels="labels") +
+  scale_color_manual(name="", breaks=c('Soy Bean Export'), values=c('#009491')) +
+  time_series_xlabels() +
+  scale_y_continuous(limits=c(-3, 3), breaks=seq(-3, 3, 1), minor_breaks=seq(-3, 3, 0.5)) +
+  labs(x = "", 
+       y = "Soy Bean Export (MM Ton)",
+       title=paste('Soy Bean Export in Midwest of Brazil | Boxcox with lambda=', round(attributes(boxcox_transform)$lambda,2)),
+       subtitle="") +
+  time_series_theme()
+
+plot
+```
+
+### Plotting ACF and PACF plots on the original time-series
+
+```{r creating_time_series, out.width="100%"}
+## Building time series object on exporting data
+midwest_soybean_tsibble <- midwest_soybean %>%
+    select(ref_date_fmd, vl_mm_ton) %>%
+    dplyr::mutate(ref_date_fmd = tsibble::yearmonth(ref_date_fmd)) %>%
+    tsibble::as_tsibble(index=ref_date_fmd)
+
+## Using the tsibble time series object
+print(midwest_soybean_tsibble %>% fabletools::features(.tbl=., .var=vl_mm_ton, features=list(unitroot_kpss, unitroot_ndiffs)))
+
+## Plotting the auto-correlation function and partial auto-correlation function for the export time series with one difference
+midwest_soybean_tsibble %>%
+  gg_tsdisplay(vl_mm_ton, plot_type='partial')
+```
+
+### Plotting ACF and PACF plots on the time-series difference one time
+
+```{r differencing_time_series, out.width="100%"}
+## Using the tsibble time series object
+print(midwest_soybean_tsibble %>% fabletools::features(.tbl=., .var=difference(vl_mm_ton), features=list(unitroot_kpss, unitroot_ndiffs)))
+
+## Plotting the auto-correlation function and partial auto-correlation function for the export time series with one difference
+midwest_soybean_tsibble %>%
+  gg_tsdisplay(difference(vl_mm_ton), plot_type='partial')
+```
+
+
+## Studying seasonality
+
+```{r cartesian_seasonal_chart, out.width="100%"}
+## Plotting monthly seasonal chart using library feasts | Cartesian view
+midwest_soybean_tsibble %>% 
+  feasts::gg_season(y=vl_mm_ton)
+```
+
+```{r polar_seasonal_chart, out.width="100%"}
+## Plotting monthly seasonal chart using library feasts | Polar view
+midwest_soybean_tsibble %>% 
+  feasts::gg_season(y=vl_mm_ton, polar=TRUE)
+```
+
+```{r time_series_decomposition, out.width="100%"}
+## Using STL model from fpp3
+dcmp <- midwest_soybean_tsibble %>%
+  model(stl = STL(vl_mm_ton))
+
+components(dcmp) %>% autoplot()
 ```
