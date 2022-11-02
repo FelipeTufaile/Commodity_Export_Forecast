@@ -5,16 +5,16 @@ date: "`r Sys.Date()`"
 output: html_document
 ---
 
-### R Markdown
+### Soy Bean Export Volume Forecast with R
+
+This document aims to study the time series of soybean exports with the aid of the R language and packages available for time series analysis for the mentioned programming language. The study will focus only on the Midwest region of Brazil in order to diminish the impact of different seasonal patterns in the soybean production cycle in different regions of Brazil. The study will, therefore, cover the analysis of its components (trend, seasonality and noise), forecasting export volume for future months using time series models like **sarima** and **prophet**, the implementation of techniques for adjusting the time series as well as any other observation on the characteristics of the time series that might be relevant.
 
 
 ```{r configs, echo=FALSE}
 knitr::opts_chunk$set(echo = TRUE, warning = FALSE, include = TRUE, message = FALSE)
 ```
 
-### Including Plots
-
-You can also embed plots, for example:
+### Loading libraries
 
 ```{r libraries}
 
@@ -30,7 +30,10 @@ library(gridExtra)
 library(ggpubr)
 library(tseries)
 ```
+
 ### Defining Functions
+
+The following codes aims to define some function that will help plotting graphs and analyzing the time series through this study.
 
 ```{r functions}
 
@@ -75,6 +78,9 @@ time_series_theme <- function(){
 
 ### Data Loading
 
+The database used in this study was taken from the open data platform of the ministry of agriculture. The platform has import and export information for various agribusiness products aggregated by month, year, country, state, product, among other groupings. The Information is available at the following link: https://indicadores.agricultura.gov.br/agrostat/index.htm.
+As mentioned in the beggining of this study, the dataset will be filtered in order to consider only soy bean volume exported from the Midwest of Brazil.
+
 ```{r loading_dataset}
 # Reading export dataset
 export <- read_csv("export_database.csv")
@@ -90,6 +96,11 @@ midwest_soybean <- export %>%
 
 ### Plotting time-series
 
+The following chart shows the mass (millions of ton) of soy bean exported from January of 2000 to December of 2021. In order to account only for complete years, the year of 2022 was left out of this plot, but will be used later on this document.
+Looking at the plot, it can be noticed that the time series seems to have a well defined seasonal pattern, but with increasing variance along the years. That is, the series denotes a heteroskedastic behavior. Given this fact, a Box Cox transformation could help make the data more 'normally’ distributed and thus help
+stabilize its variance. With this transformation, forecasting can be substantially simpler. For that reason it will also be studied the BoxCox-trasnformed time series.
+ 
+
 ```{r plotting_series_01, out.width="100%"}
 ## Plotting
 plot <- ggplot() +
@@ -97,12 +108,12 @@ plot <- ggplot() +
             xdata="ref_date_fmd", 
             ydata="vl_mm_ton", 
             name='Soy Bean Export', 
-            color="#009491", 
+            color="#C4161C", 
             text_position="Above", 
             labels="labels") +
-  scale_color_manual(name="", breaks=c('Soy Bean Export'), values=c('#009491')) +
+  scale_color_manual(name="", breaks=c('Soy Bean Export'), values=c('#C4161C')) +
   time_series_xlabels() +
-  scale_y_continuous(limits=c(0, 10), breaks=seq(0, 10, 1), minor_breaks=seq(0, 10, 0.5)) +
+  scale_y_continuous(limits=c(0, 9), breaks=seq(0, 9, 1), minor_breaks=seq(0, 9, 0.5)) +
   labs(x = "", 
        y = "Soy Bean Export (MM Ton)",
        title="Soy Bean Export in Midwest of Brazil from Jan-2000 to Dec-2021",
@@ -114,6 +125,8 @@ plot
 
 
 ### Applying a boxcox transformation on the time-series
+
+
 
 ```{r boxcox, out.width="100%"}
 ## Calculating boxcox transformation on vl_mm_ton
@@ -256,3 +269,10 @@ annotate_figure(plot, top=text_grob("Soy Bean Export in Midwest of Brazil",
                                     vjust=0))
 
 ```
+
+### References
+
+- https://indicadores.agricultura.gov.br/agrostat/index.htm
+- https://otexts.com/fpp2/stochastic-and-deterministic-trends.html
+- https://harlecin.netlify.app/post/box-cox-and-other-transformations/
+
