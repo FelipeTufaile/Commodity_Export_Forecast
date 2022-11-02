@@ -157,7 +157,7 @@ plot <- ggplot() +
   scale_y_continuous(limits=c(-3, 3), breaks=seq(-3, 3, 1), minor_breaks=seq(-3, 3, 0.5)) +
   labs(x = "", 
        y = "Soy Bean Export (MM Ton)",
-       title=paste('Soy Bean Export in Midwest of Brazil | Box-Cox with lambda=', round(attributes(boxcox_transform)$lambda,2)),
+       title=paste('Soy Bean Export in Midwest of Brazil | Box-Cox transformation with lambda=', round(attributes(boxcox_transform)$lambda,2)),
        subtitle="") +
   time_series_theme()
 
@@ -178,7 +178,7 @@ ggtitle("QQ plot: Original versus transformed time series", "BoxCox transform im
 ```
 
 
-### Plotting ACF and PACF plots on the original time-series
+### Time Series Analysis and ACF / PACF plots
 
 Analyzing the time series in the above figures it seems that both time series, original and transformed, have a stochastic trend since there seems to be some randomness building up over time. In order to confirm that observation it will be applied a **ADF** (Augmented Dicker-Fuller) test to check if there is unit-roots present in the series.
 
@@ -196,36 +196,73 @@ tseries::adf.test(midwest_soybean_boxcox$vl_mm_ton_boxcox,
                   k = trunc((length(midwest_soybean_boxcox$vl_mm_ton_boxcox)-1)^(1/3)))
 ```
 
+The null hypothesis of the **ADF** assumes that there is an unit root in the time series (therefore the series is non-stationary), whereas the alternate hypothesis, as configured in the function above, assumes that the series are stationary. Since the p-values obtained for both tests are low (less than 0.05) the null hypothesis is rejected indicating that the series, original and transformed, are stationary. However, as mentioned by Robert Hyndman in his book, different unit root tests are available, which are based on different assumptions and may lead to conflicting answers (Hyndman, 2021). In the book, Hyndman suggests the Kwiatkowski-Phillips-Schmidt-Shin (**KPSS**) test (Kwiatkowski et al., 1992) as an alternative. As indicated in the reference mentioned, the **KPSS** test assumes that the data is stationary as the null hypothesis. Therefore, small p-values suggest that the data has an unit root and that differencing is required. Applying the **KPSS** yields:
 
-Auto-Correlation and Partial Auto-Correlation functions helps  
-
-```{r creating_time_series, out.width="100%"}
+**KPSS test on original time series**
+```{r kpss_test_original}
 ## Building time series object on exporting data
 midwest_soybean_tsibble <- midwest_soybean %>%
     select(ref_date_fmd, vl_mm_ton) %>%
     dplyr::mutate(ref_date_fmd = tsibble::yearmonth(ref_date_fmd)) %>%
     tsibble::as_tsibble(index=ref_date_fmd)
 
-## Using the tsibble time series object
-print(midwest_soybean_tsibble %>% fabletools::features(.tbl=., .var=vl_mm_ton, features=list(unitroot_kpss, unitroot_ndiffs)))
-
-## Plotting the auto-correlation function and partial auto-correlation function for the export time series with one difference
+## Performing KPSS test
 midwest_soybean_tsibble %>%
-  gg_tsdisplay(vl_mm_ton, plot_type='partial')
+  fabletools::features(.tbl=., .var=vl_mm_ton, features=list(unitroot_kpss, unitroot_ndiffs))
+```
+
+**KPSS test on transformed time series**
+```{r kpss_test_transformed}
+## Building time series object on exporting data
+midwest_soybean_boxcox_tsibble <- midwest_soybean_boxcox %>%
+    select(ref_date_fmd, vl_mm_ton_boxcox) %>%
+    dplyr::mutate(ref_date_fmd = tsibble::yearmonth(ref_date_fmd)) %>%
+    tsibble::as_tsibble(index=ref_date_fmd)
+
+## Performing KPSS test
+midwest_soybean_boxcox_tsibble %>%
+  fabletools::features(.tbl=., .var=vl_mm_ton_boxcox, features=list(unitroot_kpss, unitroot_ndiffs))
+```
+
+Since the p-value obtained with the **KPSS** test is low for both series (less than 0.05), the null hypothesis is rejected suggesting that both time series are non-stationary, differently from the conclusion obtained with the **ADF** test. Furthermore, the **KPSS** test indicates that one differencing is required for each series. Since that intuitively the guess was that the series had stochastic trend and that the **KPSS** test suggested no evidence of stationarity, the series will be considered to have stochastic trend and, therefore, to be non-stationary. For that reason, it will be applied one-differencing to each series in order to remove the unit root.
+
+**Differencing the time-series**
+
+```{r}
+## Building a time series object on the exporting data with one differencing on exported amount
+dt1_midwest_soybean_tsibble <- midwest_soybean %>%
+    dplyr::select(ref_date_fmd, vl_mm_ton) %>%
+    dplyr::mutate(vl_mm_ton_dt1 = difference(vl_mm_ton)) %>%
+    dplyr::select(-vl_mm_ton) %>%
+    dplyr::mutate(ref_date_fmd = tsibble::yearmonth(ref_date_fmd)) %>%
+    tsibble::as_tsibble(index=ref_date_fmd)
+
+## Building a time series object on the transformed exporting data with one differencing on exported amount
+dt1_midwest_soybean_boxcox_tsibble <- midwest_soybean_boxcox %>%
+    dplyr::select(ref_date_fmd, vl_mm_ton_boxcox) %>%
+    dplyr::mutate(vl_mm_ton_boxcox_dt1 = difference(vl_mm_ton_boxcox)) %>%
+    dplyr::select(-vl_mm_ton_boxcox) %>%
+    dplyr::mutate(ref_date_fmd = tsibble::yearmonth(ref_date_fmd)) %>%
+    tsibble::as_tsibble(index=ref_date_fmd)
 ```
 
 
+**Plotting the Auto-Correlation and Partial Auto-Correlation functions**  
 
-### Plotting ACF and PACF plots on the time-series difference one time
-
-```{r differencing_time_series, out.width="100%"}
-## Using the tsibble time series object
-print(midwest_soybean_tsibble %>% fabletools::features(.tbl=., .var=difference(vl_mm_ton), features=list(unitroot_kpss, unitroot_ndiffs)))
-
+```{r acf_pacf_original, out.width="100%"}
 ## Plotting the auto-correlation function and partial auto-correlation function for the export time series with one difference
-midwest_soybean_tsibble %>%
-  gg_tsdisplay(difference(vl_mm_ton), plot_type='partial')
+dt1_midwest_soybean_tsibble %>%
+  gg_tsdisplay(vl_mm_ton_dt1, plot_type='partial')
 ```
+
+```{r acf_pacf_transformed, out.width="100%"}
+## Plotting the auto-correlation function and partial auto-correlation function for the export time series with one difference
+dt1_midwest_soybean_boxcox_tsibble %>%
+  gg_tsdisplay(vl_mm_ton_boxcox_dt1, plot_type='partial')
+```
+
+The **ACF** and **PACF** plots for both series, original and transformed, look very similar. Therefore, the highlight mentioned in the sequence are valid for both series. First, it is noticeable that the ACF peaks in seasonal lags multiples of 12, which are significantly different from 0. That suggest that the **P** term of a SARIMA model would be equal to 12, **P = 12**. Furthermore, the **ACF** and **PACF** for lag 1 are also greater than 0, suggesting that good candidate models would have **p = 1** and / or **q = 1**.\
+Given the observations made in the previous paragraph, good suggestion of models for modeling the time series of soy bean export in the Midwest of Brazil would be an **ARIMA(1,1,0)(0,1,0)[12]** and an **ARIMA(0,1,1)(0,1,0)[12]**. This models, along the models suggest by the **stepwise** and **search** algorithms from **fable** package will be verified in upcoming chapters.
 
 
 ## Studying seasonality
@@ -292,9 +329,11 @@ annotate_figure(plot, top=text_grob("Soy Bean Export in Midwest of Brazil",
 
 ```
 
-### References
+### Bibliography
 
-- https://indicadores.agricultura.gov.br/agrostat/index.htm
-- https://otexts.com/fpp2/stochastic-and-deterministic-trends.html
+[1] Hyndman, R.J., & Athanasopoulos, G. (2021) Forecasting: principles and practice, 3rd edition, OTexts: Melbourne, Australia. OTexts.com/fpp3. Accessed on 2022-11-01.
+
+[2] Indicadores Agricultura, Ministério da Agrigultura Brasileiro. https://indicadores.agricultura.gov.br/agrostat/index.htm. Acessed on 2022-10-29.
+
 - https://harlecin.netlify.app/post/box-cox-and-other-transformations/
 
