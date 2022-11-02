@@ -26,6 +26,9 @@ library(tidyverse)
 library(ggthemes)
 library(fpp3)
 library(forecast)
+library(gridExtra)
+library(ggpubr)
+library(tseries)
 ```
 ### Defining Functions
 
@@ -141,6 +144,19 @@ plot <- ggplot() +
 plot
 ```
 
+
+```{r qqplot, out.width="100%"}
+df_hist = rbind(tibble(vl_mm_ton = as.double(midwest_soybean$vl_mm_ton), type = "Original"), 
+                tibble(vl_mm_ton = as.double(midwest_soybean_boxcox$vl_mm_ton_boxcox), type = "BoxCox"))
+ggplot(df_hist, aes(sample = vl_mm_ton)) +
+geom_qq() +
+geom_qq_line() +
+facet_grid(type ~ ., scales = "free_y") +
+ggtitle("QQ plot: Original and transformed data", "BoxCox transform improved normality")
+
+```
+
+
 ### Plotting ACF and PACF plots on the original time-series
 
 ```{r creating_time_series, out.width="100%"}
@@ -157,6 +173,13 @@ print(midwest_soybean_tsibble %>% fabletools::features(.tbl=., .var=vl_mm_ton, f
 midwest_soybean_tsibble %>%
   gg_tsdisplay(vl_mm_ton, plot_type='partial')
 ```
+
+```{r}
+tseries::adf.test(midwest_soybean_boxcox$vl_mm_ton_boxcox,
+                  alternative = c("stationary", "explosive"), 
+                  k = trunc((length(midwest_soybean_boxcox$vl_mm_ton_boxcox)-1)^(1/3)))
+```
+
 
 ### Plotting ACF and PACF plots on the time-series difference one time
 
@@ -190,4 +213,46 @@ dcmp <- midwest_soybean_tsibble %>%
   model(stl = STL(vl_mm_ton))
 
 components(dcmp) %>% autoplot()
+```
+
+```{r time_series_boxcox_time_series, out.width="100%"}
+## Building time series object on exporting data
+midwest_soybean_boxcox_tsibble <- midwest_soybean_boxcox %>%
+    select(ref_date_fmd, vl_mm_ton_boxcox) %>%
+    dplyr::mutate(ref_date_fmd = tsibble::yearmonth(ref_date_fmd)) %>%
+    tsibble::as_tsibble(index=ref_date_fmd)
+
+## Using STL model from fpp3
+dcmp_boxcox <- midwest_soybean_boxcox_tsibble %>%
+  model(stl = STL(vl_mm_ton_boxcox))
+
+components(dcmp_boxcox) %>% autoplot()
+```
+
+
+```{r comparing_datasets, out.width="100%"}
+## Original dataset
+plot_original <- midwest_soybean_tsibble %>%
+  autoplot(vl_mm_ton) +
+  geom_smooth() +
+  ggtitle("Original scale")
+
+## Transformed dataset
+plot_boxcox <- midwest_soybean_boxcox_tsibble %>%
+  autoplot(vl_mm_ton_boxcox) +
+  geom_smooth() +
+  ggtitle(paste("Box Cox with lambda = ", round(attributes(boxcox_transform)$lambda,2)))
+
+## Comparision
+plot <- ggarrange(plot_original, plot_boxcox, ncol=2, nrow=1, widths=c(1,1), common.legend = FALSE)
+
+annotate_figure(plot, top=text_grob("Soy Bean Export in Midwest of Brazil", 
+                                    color="#000000", 
+                                    size=14, 
+                                    x=unit(0.5, "lines"), 
+                                    y=unit(0, "lines"), 
+                                    just="left", 
+                                    hjust=0, 
+                                    vjust=0))
+
 ```
