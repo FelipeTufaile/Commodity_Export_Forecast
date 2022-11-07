@@ -365,8 +365,51 @@ plot(forecast(fit1,h=12))
 #Backtest
 
 ```{r}
+#197 observações (75%) para a base de treino - e 67 (25%) de observações para a base de teste
+
+#Como estamos trabalhando com ts, primeiro ordenamos e escolhemos as primeiras 197 obs
+tr <- midwest_soybean_tsibble %>% 
+          arrange(ref_date_fmd) %>% 
+          head(197) %>% 
+          pull(name = 'vl_mm_ton')
+
+#Como estamos trabalhando com ts, primeiro ordenamos e escolhemos as últimas 67 obs
+teste <- midwest_soybean_tsibble %>% 
+          arrange(ref_date_fmd) %>% 
+          tail(67) %>% 
+          pull(name = 'vl_mm_ton')
+```
+
+
+```{r}
+#Geramos dois modelos a partir da base de treino
+
+#Abaixo selecionamos o melhor modelo dos sarimas que testamos (era o modelo 1)
+fit1 = Arima(tr,order=c(2,0,0),seasonal=list(order=c(2,1,2),period=12),method="ML")
+
+#Abaixamos testamos o melhor modelo dos Prophet que testamos - ver com o Rodrigo)
+fit2 = Arima(tr,order=c(1,0,0),seasonal=list(order=c(1,1,0),period=12),method="ML")
 
 ```
+
+
+```{r}
+#Comparando as preisões com a base de teste
+
+#fazemos então a previsão com o modelo sarima para os próximos 67 meses
+forecast_01 <- forecast(fit1, h = 67)
+plot(forecast_01)
+
+#fazemos a previsão com o modelo prophet para os próxmos 67 meses
+forecast_02 <- forecast(fit2, h = 67)#aqui incluiríamos o modelo prophet
+plot(forecast_02)
+
+#Comparamos as duas previsões com a base teste para ver qual o melhor modelo
+accuracy(forecast_01, teste)
+accuracy(forecast_02, teste)
+
+```
+
 
 
 ### Bibliography
