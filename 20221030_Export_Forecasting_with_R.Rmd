@@ -387,14 +387,14 @@ teste <- midwest_soybean_tsibble %>%
 #Abaixo selecionamos o melhor modelo dos sarimas que testamos (era o modelo 1)
 fit1 = Arima(tr,order=c(2,0,0),seasonal=list(order=c(2,1,2),period=12),method="ML")
 
-#Abaixamos testamos o melhor modelo dos Prophet que testamos - ver com o Rodrigo)
+#Abaixo selecionamos o melhor modelo dos Prophet que testamos - ver com o Rodrigo)
 fit2 = Arima(tr,order=c(1,0,0),seasonal=list(order=c(1,1,0),period=12),method="ML")
 
 ```
 
 
 ```{r}
-#Comparando as preisões com a base de teste
+#Comparando as previsões com a base de teste
 
 #fazemos então a previsão com o modelo sarima para os próximos 67 meses
 forecast_01 <- forecast(fit1, h = 67)
