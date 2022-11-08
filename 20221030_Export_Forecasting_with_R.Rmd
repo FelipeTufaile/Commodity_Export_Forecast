@@ -143,6 +143,9 @@ boxcox_transform <- BoxCox(midwest_soybean$vl_mm_ton, lambda = "auto")
 midwest_soybean_boxcox <- tibble(ref_date_fmd = midwest_soybean$ref_date_fmd,
                                  vl_mm_ton_boxcox = c(boxcox_transform))
 
+## Getting calculated lambda
+boxcox_lambda <-attributes(boxcox_transform)$lambda
+
 ## Plotting
 plot <- ggplot() +
   add_serie(data=midwest_soybean_boxcox %>% mutate(labels = ""), 
@@ -157,7 +160,7 @@ plot <- ggplot() +
   scale_y_continuous(limits=c(-3, 3), breaks=seq(-3, 3, 1), minor_breaks=seq(-3, 3, 0.5)) +
   labs(x = "", 
        y = "Soy Bean Export (MM Ton)",
-       title=paste('Soy Bean Export in Midwest of Brazil | Box-Cox transformation with lambda=', round(attributes(boxcox_transform)$lambda,2)),
+       title=paste('Soy Bean Export in Midwest of Brazil | Box-Cox Trans. w/ lambda=', round(boxcox_lambda,2)),
        subtitle="") +
   time_series_theme()
 
@@ -196,10 +199,10 @@ tseries::adf.test(midwest_soybean_boxcox$vl_mm_ton_boxcox,
                   k = trunc((length(midwest_soybean_boxcox$vl_mm_ton_boxcox)-1)^(1/3)))
 ```
 
-The null hypothesis of the **ADF** assumes that there is an unit root in the time series (therefore the series is non-stationary), whereas the alternate hypothesis, as configured in the function above, assumes that the series are stationary. Since the p-values obtained for both tests are low (less than 0.05) the null hypothesis is rejected indicating that the series, original and transformed, are stationary. However, as mentioned by Robert Hyndman in his book, different unit root tests are available, which are based on different assumptions and may lead to conflicting answers (Hyndman, 2021). In the book, Hyndman suggests the Kwiatkowski-Phillips-Schmidt-Shin (**KPSS**) test (Kwiatkowski et al., 1992) as an alternative. As indicated in the reference mentioned, the **KPSS** test assumes that the data is stationary as the null hypothesis. Therefore, small p-values suggest that the data has an unit root and that differencing is required. Applying the **KPSS** yields:
+The null hypothesis of the **ADF** assumes that there is an unit root in the time series (therefore the series is non-stationary), whereas the alternate hypothesis, as configured in the function above, assumes that the series are stationary. Since the p-values obtained for both tests are low (less than 0.05) the null hypothesis is rejected indicating that the series, original and transformed, are stationary. However, as mentioned by Robert Hyndman in his book, different unit root tests are available, which are based on different assumptions and may lead to conflicting answers (Hyndman, 2021). In the book, Hyndman suggests the Kwiatkowski-Phillips-Schmidt-Shin (**KPSS**) test (Kwiatkowski et al., 1992) as an alternative. As indicated in the reference mentioned, the **KPSS** test assumes that the data is stationary as the null hypothesis. Therefore, small p-values suggest that the data has an unit root and that differencing is required. In addition, as this analysis deals with a time series of an agricultural crop, it is expected that there is a well-defined seasonality of 12 months. The **fabletools** package also checks for the presence of seasonal unit roots, as it will be studied in the sequence. Applying the **KPSS** looking for seasonal unit roots yields:
 
 **KPSS test on original time series**
-```{r kpss_test_original}
+```{r seasonal_kpss_test_original}
 ## Building time series object on exporting data
 midwest_soybean_tsibble <- midwest_soybean %>%
     select(ref_date_fmd, vl_mm_ton) %>%
@@ -207,8 +210,14 @@ midwest_soybean_tsibble <- midwest_soybean %>%
     tsibble::as_tsibble(index=ref_date_fmd)
 
 ## Performing KPSS test
-midwest_soybean_tsibble %>%
-  fabletools::features(.tbl=., .var=vl_mm_ton, features=list(unitroot_kpss, unitroot_ndiffs))
+print(fabletools::features(.tbl=midwest_soybean_tsibble, 
+                           .var=vl_mm_ton, 
+                           features=list(unitroot_kpss, unitroot_nsdiffs)))
+
+## Performing KPSS test applying one difference with lag 12
+print(fabletools::features(.tbl=midwest_soybean_tsibble, 
+                           .var=difference(vl_mm_ton, 12), 
+                           features=list(unitroot_kpss, unitroot_ndiffs)))
 ```
 
 **KPSS test on transformed time series**
@@ -220,11 +229,17 @@ midwest_soybean_boxcox_tsibble <- midwest_soybean_boxcox %>%
     tsibble::as_tsibble(index=ref_date_fmd)
 
 ## Performing KPSS test
-midwest_soybean_boxcox_tsibble %>%
-  fabletools::features(.tbl=., .var=vl_mm_ton_boxcox, features=list(unitroot_kpss, unitroot_ndiffs))
+print(fabletools::features(.tbl=midwest_soybean_boxcox_tsibble, 
+                           .var=vl_mm_ton_boxcox, 
+                           features=list(unitroot_kpss, unitroot_nsdiffs)))
+
+## Performing KPSS test applying one difference with lag 12
+print(fabletools::features(.tbl=midwest_soybean_boxcox_tsibble, 
+                           .var=difference(vl_mm_ton_boxcox, 12), 
+                           features=list(unitroot_kpss, unitroot_ndiffs)))
 ```
 
-Since the p-value obtained with the **KPSS** test is low for both series (less than 0.05), the null hypothesis is rejected suggesting that both time series are non-stationary, differently from the conclusion obtained with the **ADF** test. Furthermore, the **KPSS** test indicates that one differencing is required for each series. Since that intuitively the guess was that the series had stochastic trend and that the **KPSS** test suggested no evidence of stationarity, the series will be considered to have stochastic trend and, therefore, to be non-stationary. For that reason, it will be applied one-differencing to each series in order to remove the unit root.
+Since the p-value obtained with the **KPSS** test is low for both series (less than 0.05), the null hypothesis is rejected suggesting that both time series are non-stationary, differently from the conclusion obtained with the **ADF** test. Furthermore, the **KPSS** test indicates that one difference is required for each series. It also interesting to notice that applying one difference with a 12 period lag removed the unit root present in the time series, confirming that the stochastic trend is, in fact, related to the 12-months seasonal pattern.
 
 **Differencing the time-series**
 
@@ -232,7 +247,7 @@ Since the p-value obtained with the **KPSS** test is low for both series (less t
 ## Building a time series object on the exporting data with one differencing on exported amount
 dt1_midwest_soybean_tsibble <- midwest_soybean %>%
     dplyr::select(ref_date_fmd, vl_mm_ton) %>%
-    dplyr::mutate(vl_mm_ton_dt1 = difference(vl_mm_ton)) %>%
+    dplyr::mutate(vl_mm_ton_dt1 = difference(vl_mm_ton, 12)) %>%
     dplyr::select(-vl_mm_ton) %>%
     dplyr::mutate(ref_date_fmd = tsibble::yearmonth(ref_date_fmd)) %>%
     tsibble::as_tsibble(index=ref_date_fmd)
@@ -240,7 +255,7 @@ dt1_midwest_soybean_tsibble <- midwest_soybean %>%
 ## Building a time series object on the transformed exporting data with one differencing on exported amount
 dt1_midwest_soybean_boxcox_tsibble <- midwest_soybean_boxcox %>%
     dplyr::select(ref_date_fmd, vl_mm_ton_boxcox) %>%
-    dplyr::mutate(vl_mm_ton_boxcox_dt1 = difference(vl_mm_ton_boxcox)) %>%
+    dplyr::mutate(vl_mm_ton_boxcox_dt1 = difference(vl_mm_ton_boxcox, 12)) %>%
     dplyr::select(-vl_mm_ton_boxcox) %>%
     dplyr::mutate(ref_date_fmd = tsibble::yearmonth(ref_date_fmd)) %>%
     tsibble::as_tsibble(index=ref_date_fmd)
@@ -261,44 +276,115 @@ dt1_midwest_soybean_boxcox_tsibble %>%
   gg_tsdisplay(vl_mm_ton_boxcox_dt1, plot_type='partial')
 ```
 
-The **ACF** and **PACF** plots for both series, original and transformed, look very similar. Therefore, the highlight mentioned in the sequence are valid for both series. First, it is noticeable that the ACF peaks in seasonal lags multiples of 12, which are significantly different from 0. That suggest that the **P** term of a SARIMA model would be equal to 12, **P = 12**. Furthermore, the **ACF** and **PACF** for lag 1 are also greater than 0, suggesting that good candidate models would have **p = 1** and / or **q = 1**.\
-Given the observations made in the previous paragraph, good suggestion of models for modeling the time series of soy bean export in the Midwest of Brazil would be an **ARIMA(1,1,0)(0,1,0)[12]** and an **ARIMA(0,1,1)(0,1,0)[12]**. This models, along the models suggest by the **stepwise** and **search** algorithms from **fable** package will be verified in upcoming chapters.
+The **ACF** and **PACF** plots for both series, applied one difference, look similar with some particularities. Looking at the **PACF** plots for the original data, it is noticeable that the remaining series shows an auto-correlation at lag 12 suggesting a **seasonal AR(1)** and a **AR(3)** model due to the high-correlation for lags lower or equal to 3. On the other hand, the **ACF** plot of the original data suggests a **seasonal MA(1)** model due to the high correlation at lag 12 and a **MA(2)** model due to the correlation for lags lower or equal to 2.
+Looking now at the transformed time series, the only difference is that the orders of the AR and MA models are **AR(2)** and **MA(4)**, respectively. In summary, the analysis of the **ACF / PACF** plots for both series suggests:
+
+**Original Series**
+
+  - Candidate model 1: ARIMA(3,0,0)(1,1,0)[12] 
+  - Candidate model 2: ARIMA(0,0,2)(1,1,0)[12]
+  - Candidate model 3: ARIMA(3,0,0)(0,1,1)[12] 
+  - Candidate model 4: ARIMA(0,0,2)(0,1,1)[12]
+
+**Transformed Series**
+
+  - Candidate model 1: ARIMA(2,0,0)(1,1,0)[12] 
+  - Candidate model 2: ARIMA(0,0,4)(1,1,0)[12]
+  - Candidate model 3: ARIMA(2,0,0)(0,1,1)[12] 
+  - Candidate model 4: ARIMA(0,0,4)(0,1,1)[12]
+
+This models, along the models suggest by auto-arima algorithms will be verified in upcoming chapters.
 
 
 ## Studying seasonality
 
+Looking at the seasonal plots bellow it becomes clear the seasonal pattern of soy bean export in the Midwest of Brazil: soy bean export are concentrated between March and July, usually peaking between March and May, whereas there is no much export between August and February. That, in fact, makes sense since soy bean is usually harvested between January and May and planted between September and December. Therefore, the peaks of soy bean production would closely related to the harvesting period of the crop.
+The seasonal plot bellow shows the seasonal patter for both series, original and transformed, in two different coordinate systems (Cartesian and polar) for better comprehension.
+
 ```{r cartesian_seasonal_chart, out.width="100%"}
-## Plotting monthly seasonal chart using library feasts | Cartesian view
-midwest_soybean_tsibble %>% 
+## Plotting monthly seasonal chart using library feasts | Original | Cartesian view
+plot_seasonality_original <- midwest_soybean_tsibble %>% 
   feasts::gg_season(y=vl_mm_ton)
+
+## Plotting monthly seasonal chart using library feasts | Transformed | Cartesian view
+plot_seasonality_boxcox <- midwest_soybean_boxcox_tsibble %>% 
+  feasts::gg_season(y=vl_mm_ton_boxcox)
+
+## Comparision
+plot <- ggarrange(plot_seasonality_original, 
+                  plot_seasonality_boxcox, 
+                  ncol=2, 
+                  nrow=1, 
+                  widths=c(1,1),
+                  legend="bottom",
+                  common.legend = T)
+
+annotate_figure(plot, top=text_grob("Soy Bean Export in Midwest of Brazil", 
+                                    color="#000000", 
+                                    size=14, 
+                                    x=unit(0.5, "lines"), 
+                                    y=unit(0, "lines"), 
+                                    just="left", 
+                                    hjust=0, 
+                                    vjust=0))
+
 ```
+
 
 ```{r polar_seasonal_chart, out.width="100%"}
-## Plotting monthly seasonal chart using library feasts | Polar view
-midwest_soybean_tsibble %>% 
+## Plotting monthly seasonal chart using library feasts | Original | Polar view
+plot_seasonality_original <- midwest_soybean_tsibble %>% 
   feasts::gg_season(y=vl_mm_ton, polar=TRUE)
+
+## Plotting monthly seasonal chart using library feasts | Trasnformed | Polar view
+plot_seasonality_boxcox <- midwest_soybean_boxcox_tsibble %>% 
+  feasts::gg_season(y=vl_mm_ton_boxcox, polar=TRUE)
+
+## Comparision
+plot <- ggarrange(plot_seasonality_original, 
+                  plot_seasonality_boxcox, 
+                  ncol=2, 
+                  nrow=1, 
+                  widths=c(1,1),
+                  legend="bottom",
+                  common.legend = T)
+
+annotate_figure(plot, top=text_grob("Soy Bean Export in Midwest of Brazil", 
+                                    color="#000000", 
+                                    size=14, 
+                                    x=unit(0.5, "lines"), 
+                                    y=unit(0, "lines"), 
+                                    just="left", 
+                                    hjust=0, 
+                                    vjust=0))
 ```
 
-```{r time_series_decomposition, out.width="100%"}
-## Using STL model from fpp3
-dcmp <- midwest_soybean_tsibble %>%
-  model(stl = STL(vl_mm_ton))
+The plots bellow show the decomposition of the time series in its components (trend, seasonal, random), using the **ts** function from base R, considering a multiplicative model. The reason for choosing a multiplicative model at this point was made by intuition since it would be expected that the actual values of soy bean export would the result of some trend multiplied by the percentage of the crop that is export (within a year) each month and that every year, that percentage would be similar. However, the appropriate approach would be to test the two models (additive and multiplicative) and compare the performance.
+Comparing the plot for the two time series one thing that comes into attention is that the seasonal and random components are very different. The seasonal component of the transformed series shows a significant peak for July whereas the seasonal component of the original series shows a pattern with values more evenly distributed between months.
+For the purpose of this study, only the decomposition function from base R will be studied. However, other decomposition models may give a better result for understanding the components of time series, for example **STL** and **ETS** models.
 
-components(dcmp) %>% autoplot()
+```{r time_series_decomposition, out.width="100%"}
+## Converting the time series into a time series (ts) object 
+ts_midwest_soybean <- ts(data=midwest_soybean$vl_mm_ton, # selecting serie
+                         start=c(2000, 1), # start month
+                         end=c(2021, 12), # end month 
+                         frequency=12 # considering monthly frequency
+                         )
+
+## Decomposing using base R
+plot(decompose(ts_midwest_soybean, "multiplicative"))
 ```
 
 ```{r time_series_boxcox_time_series, out.width="100%"}
-## Building time series object on exporting data
-midwest_soybean_boxcox_tsibble <- midwest_soybean_boxcox %>%
-    select(ref_date_fmd, vl_mm_ton_boxcox) %>%
-    dplyr::mutate(ref_date_fmd = tsibble::yearmonth(ref_date_fmd)) %>%
-    tsibble::as_tsibble(index=ref_date_fmd)
+## Converting the time series into a time series (ts) object 
+ts_midwest_soybean_boxcox <- ts(data=midwest_soybean_boxcox$vl_mm_ton_boxcox, # selecting serie
+                                start=c(2000, 1), # start month
+                                end=c(2021, 12), # end month 
+                                frequency=12 # considering monthly frequency
+                                )
 
-## Using STL model from fpp3
-dcmp_boxcox <- midwest_soybean_boxcox_tsibble %>%
-  model(stl = STL(vl_mm_ton_boxcox))
-
-components(dcmp_boxcox) %>% autoplot()
+## Decomposing using base R
+plot(decompose(ts_midwest_soybean_boxcox, "multiplicative"))
 ```
 
 
@@ -329,6 +415,159 @@ annotate_figure(plot, top=text_grob("Soy Bean Export in Midwest of Brazil",
 
 ```
 
+## Modeling the time series using SARIMA models
+
+In this section it will be evaluated 13 SARIMA models considering both the original time series and the transformed series. Models for similar time series will be compared using the **AIC** (Akaike information criterion) and the best models will them be assessed on its performance later on this study. As mentioned in previous section, the SARIMA model will consider a 12-month seasonality period and it will be used the models suggested from the graphic analysis (identification step of
+Box-Jenkins approach) as well as the models chosen by auto-arima from **forecast** package.  
+
+```{r fitting_sarima_models_01}
+
+## Creating a table for holding results
+sarima_models <- tibble(model=as.character(), lambda=as.numeric(), aicc=as.numeric())
+
+## Original Series
+
+## Configuring a SARIMA model of orders: ARIMA(3,0,0)(1,1,0)[12]
+fit1 <- Arima(y=ts_midwest_soybean,order=c(3,0,0),seasonal=list(order=c(1,1,0),period=12),method="ML")
+sarima_models <- bind_rows(sarima_models, tibble(model="SARIMA(3,0,0)(1,1,0)[12]", lambda=NA, aicc=fit1$aicc))
+
+## Configuring a SARIMA model of orders: ARIMA(0,0,2)(1,1,0)[12]
+fit2 <- Arima(y=ts_midwest_soybean,order=c(0,0,2),seasonal=list(order=c(1,1,0),period=12),method="ML")
+sarima_models <- bind_rows(sarima_models, tibble(model="SARIMA(0,0,2)(1,1,0)[12]", lambda=NA, aicc=fit2$aicc))
+
+## Configuring a SARIMA model of orders: ARIMA(3,0,0)(0,1,1)[12]  
+fit3 <- Arima(y=ts_midwest_soybean,order=c(3,0,0),seasonal=list(order=c(0,1,1),period=12),method="ML")
+sarima_models <- bind_rows(sarima_models, tibble(model="SARIMA(3,0,0)(0,1,1)[12]", lambda=NA, aicc=fit3$aicc))
+
+## Configuring a SARIMA model of orders: ARIMA(0,0,2)(0,1,1)[12]
+fit4 <- Arima(y=ts_midwest_soybean,order=c(0,0,2),seasonal=list(order=c(0,1,1),period=12),method="ML")
+sarima_models <- bind_rows(sarima_models, tibble(model="SARIMA(0,0,2)(0,1,1)[12]", lambda=NA, aicc=fit4$aicc))
+
+## Additional model to be tested
+## Configuring a SARIMA model of orders: ARIMA(2,0,0)(2,1,2)[12]
+fit5 <- Arima(y=ts_midwest_soybean,order=c(2,0,0),seasonal=list(order=c(2,1,2),period=12),method="ML")
+sarima_models <- bind_rows(sarima_models, tibble(model="SARIMA(2,0,0)(2,1,2)[12]", lambda=NA, aicc=fit5$aicc))
+
+##Using auto.arima
+## Configuring a SARIMA model using auto-arima using setpwise algorithm 
+fit6 <- auto.arima(y=ts_midwest_soybean, stepwise = T)
+sarima_models <- bind_rows(sarima_models, tibble(model="Stepwise: SARIMA(0,0,2)(1,1,2)[12]", lambda=NA, aicc=fit6$aicc))
+
+## Configuring a SARIMA model using auto-arima using setpwise algorithm 
+fit7 <- auto.arima(y=ts_midwest_soybean, stepwise = F)
+sarima_models <- bind_rows(sarima_models, tibble(model="Search: SARIMA(0,0,2)(1,1,2)[12]", lambda=NA, aicc=fit7$aicc))
+
+
+## Box-Cox Transformed Series
+
+## Configuring a SARIMA model of orders: ARIMA(2,0,0)(1,1,0)[12]  
+fit8 <- Arima(y=ts_midwest_soybean,order=c(2,0,0),seasonal=list(order=c(1,1,0),period=12),method="ML",lambda=boxcox_lambda)
+sarima_models <- bind_rows(sarima_models, tibble(model="SARIMA(2,0,0)(1,1,0)[12]", lambda=fit8$lambda[1], aicc=fit8$aicc))
+
+## Configuring a SARIMA model of orders: ARIMA(0,0,4)(1,1,0)[12]
+fit9 <- Arima(y=ts_midwest_soybean,order=c(0,0,4),seasonal=list(order=c(1,1,0),period=12),method="ML",lambda=boxcox_lambda)
+sarima_models <- bind_rows(sarima_models, tibble(model="SARIMA(0,0,4)(1,1,0)[12]", lambda=fit9$lambda[1], aicc=fit9$aicc))
+
+## Configuring a SARIMA model of orders: ARIMA(2,0,0)(0,1,1)[12]  
+fit10 <- Arima(y=ts_midwest_soybean,order=c(2,0,0),seasonal=list(order=c(0,1,1),period=12),method="ML",lambda=boxcox_lambda)
+sarima_models <- bind_rows(sarima_models, tibble(model="SARIMA(2,0,0)(0,1,1)[12]", lambda=fit10$lambda[1], aicc=fit10$aicc))
+
+## Configuring a SARIMA model of orders: ARIMA(0,0,4)(0,1,1)[12]
+fit11 <- Arima(y=ts_midwest_soybean,order=c(0,0,4),seasonal=list(order=c(0,1,1),period=12),method="ML",lambda=boxcox_lambda)
+sarima_models <- bind_rows(sarima_models, tibble(model="SARIMA(0,0,4)(0,1,1)[12]", lambda=fit11$lambda[1], aicc=fit11$aicc))
+
+##Using auto.arima
+## Configuring a SARIMA model using auto-arima using setpwise algorithm 
+fit12 <- auto.arima(y=ts_midwest_soybean, stepwise = T, lambda=boxcox_lambda)
+sarima_models <- bind_rows(sarima_models,tibble(model="Stepwise: SARIMA(3,0,0)(0,1,1)[12]",lambda=fit12$lambda[1], aicc=fit12$aicc))
+
+## Configuring a SARIMA model using auto-arima using setpwise algorithm 
+fit13 <- auto.arima(y=ts_midwest_soybean, stepwise = F, lambda=boxcox_lambda)
+sarima_models <- bind_rows(sarima_models,tibble(model="Search: SARIMA(2,0,0)(2,1,1)[12]",lambda=fit13$lambda[1], aicc=fit13$aicc))
+
+sarima_models
+```
+
+It can be seen that for both series the **stepwise** algorithm from **auto.arima** does a good job finding the best models due to low **AICc** values. In order to verify if the models mentioned have captured all the information available in the series, a **Ljung-Box** test is performed on the residuals of both models in order to verify if the residuals behave as white noise. If the Ljung-Box test returns a large p-value (we fail to reject the null hypothesis), also suggesting that the residuals are **white noise**. Ljung-Box hypothesis:\
+
+- H0: The residuals **behave like white noise**;
+- H1: The residuals **do not behave like white noise**;
+
+The p-values obtained with test are greater than 0.05 for both series meaning that both of the residuals are, in fact, white noise. In other words, the models SARIMA(0,0,2)(1,1,2)[12] and SARIMA(3,0,0)(0,1,1)[12] have captured all the information available in the original and Box-Cox transformed time series, respectively. The **ACF** plot of the residuals indicate that there is no correlation between different lags for the residuals series also indicating that the residuals are white noise.
+
+```{r validating_sarima_original, out.width="100%"}
+## Ljung-Box test in the residuals
+par(mfrow=c(1,1))
+Acf(fit6$residuals, main="ACF of SARIMA(0,0,2)(1,1,2)[12] Residuals | Original Series", xlab="")
+
+## Ljung-Box test in the residuals
+print(x=Box.test(fit6$residuals, lag=12, fitdf=1, type="Ljung-Box"))
+```
+
+```{r validating_sarima_transformed, out.width="100%"}
+## Ljung-Box test in the residuals
+par(mfrow=c(1,1))
+Acf(fit12$residuals, main="ACF of SARIMA(3,0,0)(0,1,1)[12] Residuals | Transformed Series", xlab="")
+
+## Ljung-Box test in the residuals
+print(x=Box.test(fit12$residuals, lag=12, fitdf=1, type="Ljung-Box"))
+```
+
+## Plotting the forecast of the time series using the chosen SARIMA model
+
+```{r plotting_orginal_forecast, out.width="100%"}
+## Plotting the forecast of the original time series
+plot(forecast(fit6,h=12))
+```
+
+```{r plotting_transformed_forecast, out.width="100%"}
+## Plotting the forecast of the box-cox trnsformed time series
+plot(forecast(fit12,h=12))
+```
+
+## Backtest
+
+```{r}
+#197 observações (75%) para a base de treino - e 67 (25%) de observações para a base de teste
+#Como estamos trabalhando com ts, primeiro ordenamos e escolhemos as primeiras 197 obs
+#tr <- midwest_soybean_tsibble %>% 
+#          arrange(ref_date_fmd) %>% 
+#          head(197) %>% 
+#          pull(name = 'vl_mm_ton')
+
+#Como estamos trabalhando com ts, primeiro ordenamos e escolhemos as últimas 67 obs
+#teste <- midwest_soybean_tsibble %>% 
+#          arrange(ref_date_fmd) %>% 
+#          tail(67) %>% 
+#          pull(name = 'vl_mm_ton')
+```
+
+
+```{r}
+#Geramos dois modelos a partir da base de treino
+#Abaixo selecionamos o melhor modelo dos sarimas que testamos (era o modelo 1)
+#fit1 = Arima(tr,order=c(2,0,0),seasonal=list(order=c(2,1,2),period=12),method="ML")
+
+#Abaixo selecionamos o melhor modelo dos Prophet que testamos - ver com o Rodrigo)
+#fit2 = Arima(tr,order=c(1,0,0),seasonal=list(order=c(1,1,0),period=12),method="ML")
+```
+
+
+```{r}
+#Comparando as previsões com a base de teste
+#fazemos então a previsão com o modelo sarima para os próximos 67 meses
+#forecast_01 <- forecast(fit1, h = 67)
+#plot(forecast_01)
+
+#fazemos a previsão com o modelo prophet para os próxmos 67 meses
+#forecast_02 <- forecast(fit2, h = 67)#aqui incluiríamos o modelo prophet
+#plot(forecast_02)
+
+#Comparamos as duas previsões com a base teste para ver qual o melhor modelo
+#accuracy(forecast_01, teste)
+#accuracy(forecast_02, teste)
+```
+
 ### Bibliography
 
 [1] Hyndman, R.J., & Athanasopoulos, G. (2021) Forecasting: principles and practice, 3rd edition, OTexts: Melbourne, Australia. OTexts.com/fpp3. Accessed on 2022-11-01.
@@ -337,3 +576,4 @@ annotate_figure(plot, top=text_grob("Soy Bean Export in Midwest of Brazil",
 
 - https://harlecin.netlify.app/post/box-cox-and-other-transformations/
 
+modeltime r matt
