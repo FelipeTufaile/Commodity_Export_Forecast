@@ -19,7 +19,7 @@ knitr::opts_chunk$set(echo = TRUE, warning = FALSE, include = TRUE, message = FA
 ```{r libraries}
 
 ## Set working directory
-#setwd("~/Insper/Commodity_Export_Forecast")
+setwd("~/Insper/Commodity_Export_Forecast")
 
 library(dplyr)
 library(tidyverse)
@@ -83,7 +83,7 @@ As mentioned in the beggining of this study, the dataset will be filtered in ord
 
 ```{r loading_dataset}
 # Reading export dataset
-export <- read_csv("https://raw.githubusercontent.com/FelipeTufaile/Commodity_Export_Forecast/main/export_database.csv")
+export <- read_csv("export_database.csv")
 
 # Selecting soy bean production in midwest
 midwest_soybean <- export %>% 
@@ -247,11 +247,7 @@ Since the p-value obtained with the **KPSS** test is low for both series (less t
 ## Building a time series object on the exporting data with one differencing on exported amount
 dt1_midwest_soybean_tsibble <- midwest_soybean %>%
     dplyr::select(ref_date_fmd, vl_mm_ton) %>%
-<<<<<<< HEAD
     dplyr::mutate(vl_mm_ton_dt1 = difference(vl_mm_ton, 12)) %>%
-=======
-    dplyr::mutate(vl_mm_ton_dt1 = difference(vl_mm_ton,12)) %>%
->>>>>>> ca56249f491083711253d93879faa454b4331c3b
     dplyr::select(-vl_mm_ton) %>%
     dplyr::mutate(ref_date_fmd = tsibble::yearmonth(ref_date_fmd)) %>%
     tsibble::as_tsibble(index=ref_date_fmd)
@@ -259,11 +255,7 @@ dt1_midwest_soybean_tsibble <- midwest_soybean %>%
 ## Building a time series object on the transformed exporting data with one differencing on exported amount
 dt1_midwest_soybean_boxcox_tsibble <- midwest_soybean_boxcox %>%
     dplyr::select(ref_date_fmd, vl_mm_ton_boxcox) %>%
-<<<<<<< HEAD
     dplyr::mutate(vl_mm_ton_boxcox_dt1 = difference(vl_mm_ton_boxcox, 12)) %>%
-=======
-    dplyr::mutate(vl_mm_ton_boxcox_dt1 = difference(vl_mm_ton_boxcox,12)) %>%
->>>>>>> ca56249f491083711253d93879faa454b4331c3b
     dplyr::select(-vl_mm_ton_boxcox) %>%
     dplyr::mutate(ref_date_fmd = tsibble::yearmonth(ref_date_fmd)) %>%
     tsibble::as_tsibble(index=ref_date_fmd)
@@ -422,89 +414,6 @@ annotate_figure(plot, top=text_grob("Soy Bean Export in Midwest of Brazil",
                                     vjust=0))
 
 ```
-```{r}
-y <- midwest_soybean_tsibble$vl_mm_ton
-
-```
-
-
-```{r}
-library(forecast)
-fit1 = Arima(y,order=c(2,0,0),seasonal=list(order=c(2,1,2),period=12),method="ML")
-fit2 = Arima(y,order=c(1,0,0),seasonal=list(order=c(1,1,0),period=12),method="ML")
-fit3 = Arima(y,order=c(0,0,2),seasonal=list(order=c(1,1,0),period=12),method="ML")
-fit_auto <- auto.arima(midwest_soybean$vl_mm_ton)
-fit_auto_bc <- auto.arima(midwest_soybean$vl_mm_ton, lambda = 0.14)
-
-aic  = c(fit1$aic,fit2$aic,fit3$aic,fit_auto$aic,fit_auto_bc$aic)
-aicc = c(fit1$aicc,fit2$aicc,fit3$aicc,fit_auto$aicc,fit_auto_bc$aicc)
-bic  = c(fit1$bic,fit2$bic,fit3$bic,fit_auto$bic,fit_auto_bc$bic)
-cbind(aic,aicc,bic)
-
-
-
-
-```
-```{r}
-res <- fit1$residuals
-par(mfrow=c(1,1))
-Acf(res,main="",xlab="")
-Box.test(res, lag=24, fitdf=1, type="Ljung")
-```
-
-
-```{r}
-plot(forecast(fit1,h=12))
-```
-#Backtest
-
-```{r}
-#197 observações (75%) para a base de treino - e 67 (25%) de observações para a base de teste
-
-#Como estamos trabalhando com ts, primeiro ordenamos e escolhemos as primeiras 197 obs
-tr <- midwest_soybean_tsibble %>% 
-          arrange(ref_date_fmd) %>% 
-          head(197) %>% 
-          pull(name = 'vl_mm_ton')
-
-#Como estamos trabalhando com ts, primeiro ordenamos e escolhemos as últimas 67 obs
-teste <- midwest_soybean_tsibble %>% 
-          arrange(ref_date_fmd) %>% 
-          tail(67) %>% 
-          pull(name = 'vl_mm_ton')
-```
-
-
-```{r}
-#Geramos dois modelos a partir da base de treino
-
-#Abaixo selecionamos o melhor modelo dos sarimas que testamos (era o modelo 1)
-fit1 = Arima(tr,order=c(2,0,0),seasonal=list(order=c(2,1,2),period=12),method="ML")
-
-#Abaixo selecionamos o melhor modelo dos Prophet que testamos - ver com o Rodrigo)
-fit2 = Arima(tr,order=c(1,0,0),seasonal=list(order=c(1,1,0),period=12),method="ML")
-
-```
-
-
-```{r}
-#Comparando as previsões com a base de teste
-
-#fazemos então a previsão com o modelo sarima para os próximos 67 meses
-forecast_01 <- forecast(fit1, h = 67)
-plot(forecast_01)
-
-#fazemos a previsão com o modelo prophet para os próxmos 67 meses
-forecast_02 <- forecast(fit2, h = 67)#aqui incluiríamos o modelo prophet
-plot(forecast_02)
-
-#Comparamos as duas previsões com a base teste para ver qual o melhor modelo
-accuracy(forecast_01, teste)
-accuracy(forecast_02, teste)
-
-```
-
-
 
 ## Modeling the time series using SARIMA models
 
