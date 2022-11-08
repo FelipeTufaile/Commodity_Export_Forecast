@@ -72,7 +72,80 @@ time_series_theme <- function(){
         plot.subtitle = element_text(colour = '#585858', size=12),
         text = element_text(colour = '#585858', size=9),
         axis.text = element_text(colour = '#585858', size=8))
+}
+
+tswcv <- function(series, x, y, model, min.window.size, window.type=c("fixed", "variable")){
+  
+  ### --- Time Series Window Cross validation --- ###
+  
+  ## Defining the last datat point
+  k <- dim(series)[1]-min.window.size-1
+  
+  ## Saving SARIMA parameters from the given model
+  p <- model$arma[1]
+  d <- model$arma[6]
+  q <- model$arma[2]
+  P <- model$arma[3]
+  D <- model$arma[7]
+  Q <- model$arma[4]
+  s <- model$arma[5]
+  lbd <- model$lambda
+  
+  ## Initializing the errors vector
+  errors <- c()
+  
+  ## Initializing the windows.size vector
+  windows.size <- c()
+  
+  for (i in 1:k){
+    
+    ## Defining end data position
+    n <- i+min.window.size
+    
+    ## Checking the window type
+    if(window.type == "fixed"){m <- i}
+    if(window.type == "variable"){m <- 1}
+    
+    ## Defining the start point of the window time series
+    series_sy <- year(series[m, which(names(series)==x)] %>% pull())
+    series_sm <- month(series[m, which(names(series)==x)] %>% pull())
+    
+    ## Defining the end point of the window time series
+    series_ey <- year(series[n, which(names(series)==x)] %>% pull())
+    series_em <- month(series[n, which(names(series)==x)] %>% pull())
+  
+    ## Creating time series
+    ts_series <- ts(data=series[m:n, which(names(series)==y)], # selecting serie
+                    start=c(series_sy, series_sm), # start month
+                    end=c(series_ey, series_em), # end month 
+                    frequency=12) # frequency
+    
+
+    ## Building a model with the parameters above using the new training data
+    new_model <- Arima(y=ts_series,order=c(p,d,q),seasonal=list(order=c(P,D,Q),period=s),method="ML",lambda=lbd)
+    
+    ## Forecasting the next datapoint
+    pred <- forecast(new_model,h=1)
+    
+    ## Filtering the original value
+    actual <- series[n+1, which(names(series)==y)] %>% pull()
+    
+    ## calculating squared errors
+    error_sqr <- (pred$mean[1]-actual)^2
+    
+    ## Updating the errors vector
+    errors <- c(errors, error_sqr)
+    
+    ## Calculating the window size
+    windows.size <- c(windows.size, n-m)
   }
+  
+  ## Calculating mean squared errors
+  rmse <- (sum(errors)/length(errors))^0.5
+  
+  return(list("rmse"=rmse, "errors_squared"=errors, "window_size"=windows.size))
+  
+}
 ```
 
 
@@ -526,6 +599,28 @@ plot(forecast(fit12,h=12))
 ```
 
 ## Backtest
+
+```{r cross_validation}
+## Creating a cross validation table
+cv_table = tibble(model=as.character(),lambda=as.numeric(), rmse=as.numeric())
+
+## Time Series Cross Validation
+rmse_fit6_fw <- tswcv(series=midwest_soybean, x="ref_date_fmd", y="vl_mm_ton", model=fit6, min.window.size=20, window.type="fixed")
+cv_table <- bind_rows(cv_table, tibble(model="Stepwise: SARIMA(0,0,2)(1,1,2)[12]",lambda=fit6$lambda[1], rmse=rmse_fit6_fw$rmse))
+
+rmse_fit6_vw <- tswcv(series=midwest_soybean, x="ref_date_fmd", y="vl_mm_ton", model=fit6, min.window.size=20, window.type="variable")
+cv_table <- bind_rows(cv_table, tibble(model="Stepwise: SARIMA(0,0,2)(1,1,2)[12]",lambda=fit6$lambda[1], rmse=rmse_fit6_vw$rmse))
+
+rmse_fit12_fw <- tswcv(series=midwest_soybean, x="ref_date_fmd", y="vl_mm_ton", model=fit12, min.window.size=20, window.type="fixed")
+cv_table <- bind_rows(cv_table, tibble(model="Stepwise: SARIMA(3,0,0)(0,1,1)[12]",lambda=fit12$lambda[1], rmse=rmse_fit12_fw$rmse))
+
+rmse_fit12_vw <- tswcv(series=midwest_soybean, x="ref_date_fmd", y="vl_mm_ton", model=fit12, min.window.size=20, window.type="variable")
+cv_table <- bind_rows(cv_table, tibble(model="Stepwise: SARIMA(3,0,0)(0,1,1)[12]",lambda=fit12$lambda[1], rmse=rmse_fit12_vw$rmse))
+
+
+cv_table
+```
+
 
 ```{r}
 #197 observações (75%) para a base de treino - e 67 (25%) de observações para a base de teste
