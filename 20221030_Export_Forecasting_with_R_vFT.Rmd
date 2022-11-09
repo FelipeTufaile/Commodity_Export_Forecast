@@ -29,6 +29,7 @@ library(forecast)
 library(gridExtra)
 library(ggpubr)
 library(tseries)
+library(prophet)
 ```
 
 ### Defining Functions
@@ -74,12 +75,13 @@ time_series_theme <- function(){
         axis.text = element_text(colour = '#585858', size=8))
 }
 
+## Function Time Series Cross Validation SARIMA
 tswcv <- function(series, x, y, model, min.window.size, window.type=c("fixed", "variable")){
   
   ### --- Time Series Window Cross validation --- ###
   
   ## Defining the last datat point
-  k <- dim(series)[1]-min.window.size-1
+  k <- dim(series)[1]-min.window.size
   
   ## Saving SARIMA parameters from the given model
   p <- model$arma[1]
@@ -100,7 +102,7 @@ tswcv <- function(series, x, y, model, min.window.size, window.type=c("fixed", "
   for (i in 1:k){
     
     ## Defining end data position
-    n <- i+min.window.size
+    n <- i+min.window.size-1
     
     ## Checking the window type
     if(window.type == "fixed"){m <- i}
@@ -137,7 +139,7 @@ tswcv <- function(series, x, y, model, min.window.size, window.type=c("fixed", "
     errors <- c(errors, error_sqr)
     
     ## Calculating the window size
-    windows.size <- c(windows.size, n-m)
+    windows.size <- c(windows.size, n-m+1)
   }
   
   ## Calculating mean squared errors
@@ -146,6 +148,71 @@ tswcv <- function(series, x, y, model, min.window.size, window.type=c("fixed", "
   return(list("rmse"=rmse, "errors_squared"=errors, "window_size"=windows.size))
   
 }
+
+## Function Time Series Cross Validation Prophet
+tswcv_prophet <- function(series, x, y, min.window.size, window.type=c("fixed", "variable")){
+  
+  ### --- Time Series Window Cross validation for Prophet --- ###
+  
+  ## Defining the last datat point
+  k <- dim(series)[1]-min.window.size
+  
+  ## Initializing the errors vector
+  errors <- c()
+  
+  ## Initializing the windows.size vector
+  windows.size <- c()
+  
+  for (i in 1:k){
+    
+    ## Defining end data position
+    n <- i+min.window.size-1
+    
+    ## Checking the window type
+    if(window.type == "fixed"){m <- i}
+    if(window.type == "variable"){m <- 1}
+    
+    ## Defining the start point of the window time series
+    series_sy <- year(series[m, which(names(series)==x)] %>% pull())
+    series_sm <- month(series[m, which(names(series)==x)] %>% pull())
+    
+    ## Defining the end point of the window time series
+    series_ey <- year(series[n, which(names(series)==x)] %>% pull())
+    series_em <- month(series[n, which(names(series)==x)] %>% pull())
+  
+    ## Creating time series
+    df <- tibble(ds=series[m:n, which(names(series)==x)] %>% pull(), 
+                 y=series[m:n, which(names(series)==y)] %>% pull())
+
+    ## Building a model with the parameters above using the new training data
+    new_model <- prophet(df, seasonality.mode = "multiplicative")
+    
+    ## Creating forecast frame
+    future <- make_future_dataframe(new_model, freq= "month", periods = 1)
+    
+    ## Creating forecast
+    pred <- predict(new_model, future)
+    
+    ## Filtering the original value
+    actual <- series[n+1, which(names(series)==y)] %>% pull()
+    
+    ## calculating squared errors
+    error_sqr <- (pred$yhat[length(pred$yhat)]-actual)^2
+    
+    ## Updating the errors vector
+    errors <- c(errors, error_sqr)
+    
+    ## Calculating the window size
+    windows.size <- c(windows.size, n-m+1)
+  }
+  
+  ## Calculating mean squared errors
+  rmse <- (sum(errors)/length(errors))^0.5
+  
+  return(list("rmse"=rmse, "errors_squared"=errors, "window_size"=windows.size))
+  
+}
+
 ```
 
 
@@ -252,7 +319,46 @@ facet_grid(type ~ ., scales = "free_y") +
 ggtitle("QQ plot: Original versus transformed time series", "BoxCox transform improved normality")
 
 ```
+Plotting the two series side by side it becomes clear that the original series has a trend and increasing volatility, indicating that the series is not stationary. On the other hand, the Box Cox transformation yield a more constant volatility over the entire time period.
 
+```{r comparing_datasets, out.width="100%"}
+## Building time series object on exporting data
+midwest_soybean_tsibble <- midwest_soybean %>%
+    select(ref_date_fmd, vl_mm_ton) %>%
+    dplyr::mutate(ref_date_fmd = tsibble::yearmonth(ref_date_fmd)) %>%
+    tsibble::as_tsibble(index=ref_date_fmd)
+
+## Original dataset
+plot_original <- midwest_soybean_tsibble %>%
+  autoplot(vl_mm_ton) +
+  geom_smooth() +
+  ggtitle("Original scale")
+
+## Building time series object on exporting data
+midwest_soybean_boxcox_tsibble <- midwest_soybean_boxcox %>%
+    select(ref_date_fmd, vl_mm_ton_boxcox) %>%
+    dplyr::mutate(ref_date_fmd = tsibble::yearmonth(ref_date_fmd)) %>%
+    tsibble::as_tsibble(index=ref_date_fmd)
+
+## Transformed dataset
+plot_boxcox <- midwest_soybean_boxcox_tsibble %>%
+  autoplot(vl_mm_ton_boxcox) +
+  geom_smooth() +
+  ggtitle(paste("Box Cox with lambda = ", round(attributes(boxcox_transform)$lambda,2)))
+
+## Comparision
+plot <- ggarrange(plot_original, plot_boxcox, ncol=2, nrow=1, widths=c(1,1), common.legend = FALSE)
+
+annotate_figure(plot, top=text_grob("Soy Bean Export in Midwest of Brazil", 
+                                    color="#000000", 
+                                    size=14, 
+                                    x=unit(0.5, "lines"), 
+                                    y=unit(0, "lines"), 
+                                    just="left", 
+                                    hjust=0, 
+                                    vjust=0))
+
+```
 
 ### Time Series Analysis and ACF / PACF plots
 
@@ -461,33 +567,6 @@ plot(decompose(ts_midwest_soybean_boxcox, "multiplicative"))
 ```
 
 
-```{r comparing_datasets, out.width="100%"}
-## Original dataset
-plot_original <- midwest_soybean_tsibble %>%
-  autoplot(vl_mm_ton) +
-  geom_smooth() +
-  ggtitle("Original scale")
-
-## Transformed dataset
-plot_boxcox <- midwest_soybean_boxcox_tsibble %>%
-  autoplot(vl_mm_ton_boxcox) +
-  geom_smooth() +
-  ggtitle(paste("Box Cox with lambda = ", round(attributes(boxcox_transform)$lambda,2)))
-
-## Comparision
-plot <- ggarrange(plot_original, plot_boxcox, ncol=2, nrow=1, widths=c(1,1), common.legend = FALSE)
-
-annotate_figure(plot, top=text_grob("Soy Bean Export in Midwest of Brazil", 
-                                    color="#000000", 
-                                    size=14, 
-                                    x=unit(0.5, "lines"), 
-                                    y=unit(0, "lines"), 
-                                    just="left", 
-                                    hjust=0, 
-                                    vjust=0))
-
-```
-
 ## Modeling the time series using SARIMA models
 
 In this section it will be evaluated 13 SARIMA models considering both the original time series and the transformed series. Models for similar time series will be compared using the **AIC** (Akaike information criterion) and the best models will them be assessed on its performance later on this study. As mentioned in previous section, the SARIMA model will consider a 12-month seasonality period and it will be used the models suggested from the graphic analysis (identification step of
@@ -501,62 +580,125 @@ sarima_models <- tibble(model=as.character(), lambda=as.numeric(), aicc=as.numer
 ## Original Series
 
 ## Configuring a SARIMA model of orders: ARIMA(3,0,0)(1,1,0)[12]
-fit1 <- Arima(y=ts_midwest_soybean,order=c(3,0,0),seasonal=list(order=c(1,1,0),period=12),method="ML")
-sarima_models <- bind_rows(sarima_models, tibble(model="SARIMA(3,0,0)(1,1,0)[12]", lambda=NA, aicc=fit1$aicc))
+fit1 <- Arima(y=ts_midwest_soybean,
+              order=c(3,0,0),
+              seasonal=list(order=c(1,1,0),period=12),
+              method="ML")
+sarima_models <- bind_rows(sarima_models, tibble(model="SARIMA(3,0,0)(1,1,0)[12]", 
+                                                 lambda=NA, 
+                                                 aicc=fit1$aicc))
 
 ## Configuring a SARIMA model of orders: ARIMA(0,0,2)(1,1,0)[12]
-fit2 <- Arima(y=ts_midwest_soybean,order=c(0,0,2),seasonal=list(order=c(1,1,0),period=12),method="ML")
-sarima_models <- bind_rows(sarima_models, tibble(model="SARIMA(0,0,2)(1,1,0)[12]", lambda=NA, aicc=fit2$aicc))
+fit2 <- Arima(y=ts_midwest_soybean,
+              order=c(0,0,2),
+              seasonal=list(order=c(1,1,0),period=12),
+              method="ML")
+sarima_models <- bind_rows(sarima_models, tibble(model="SARIMA(0,0,2)(1,1,0)[12]", 
+                                                 lambda=NA, 
+                                                 aicc=fit2$aicc))
 
 ## Configuring a SARIMA model of orders: ARIMA(3,0,0)(0,1,1)[12]  
-fit3 <- Arima(y=ts_midwest_soybean,order=c(3,0,0),seasonal=list(order=c(0,1,1),period=12),method="ML")
-sarima_models <- bind_rows(sarima_models, tibble(model="SARIMA(3,0,0)(0,1,1)[12]", lambda=NA, aicc=fit3$aicc))
+fit3 <- Arima(y=ts_midwest_soybean,
+              order=c(3,0,0),
+              seasonal=list(order=c(0,1,1),period=12),
+              method="ML")
+sarima_models <- bind_rows(sarima_models, tibble(model="SARIMA(3,0,0)(0,1,1)[12]", 
+                                                 lambda=NA, 
+                                                 aicc=fit3$aicc))
 
 ## Configuring a SARIMA model of orders: ARIMA(0,0,2)(0,1,1)[12]
-fit4 <- Arima(y=ts_midwest_soybean,order=c(0,0,2),seasonal=list(order=c(0,1,1),period=12),method="ML")
-sarima_models <- bind_rows(sarima_models, tibble(model="SARIMA(0,0,2)(0,1,1)[12]", lambda=NA, aicc=fit4$aicc))
+fit4 <- Arima(y=ts_midwest_soybean,
+              order=c(0,0,2),
+              seasonal=list(order=c(0,1,1),period=12),
+              method="ML")
+sarima_models <- bind_rows(sarima_models, tibble(model="SARIMA(0,0,2)(0,1,1)[12]", 
+                                                 lambda=NA, 
+                                                 aicc=fit4$aicc))
 
 ## Additional model to be tested
 ## Configuring a SARIMA model of orders: ARIMA(2,0,0)(2,1,2)[12]
-fit5 <- Arima(y=ts_midwest_soybean,order=c(2,0,0),seasonal=list(order=c(2,1,2),period=12),method="ML")
-sarima_models <- bind_rows(sarima_models, tibble(model="SARIMA(2,0,0)(2,1,2)[12]", lambda=NA, aicc=fit5$aicc))
+fit5 <- Arima(y=ts_midwest_soybean,
+              order=c(2,0,0),
+              seasonal=list(order=c(2,1,2),period=12),
+              method="ML")
+sarima_models <- bind_rows(sarima_models, tibble(model="SARIMA(2,0,0)(2,1,2)[12]", 
+                                                 lambda=NA, 
+                                                 aicc=fit5$aicc))
 
 ##Using auto.arima
 ## Configuring a SARIMA model using auto-arima using setpwise algorithm 
-fit6 <- auto.arima(y=ts_midwest_soybean, stepwise = T)
-sarima_models <- bind_rows(sarima_models, tibble(model="Stepwise: SARIMA(0,0,2)(1,1,2)[12]", lambda=NA, aicc=fit6$aicc))
+fit6 <- auto.arima(y=ts_midwest_soybean, 
+                   stepwise = T)
+sarima_models <- bind_rows(sarima_models, tibble(model="Stepwise: SARIMA(0,0,2)(1,1,2)[12]", 
+                                                 lambda=NA, 
+                                                 aicc=fit6$aicc))
 
 ## Configuring a SARIMA model using auto-arima using setpwise algorithm 
-fit7 <- auto.arima(y=ts_midwest_soybean, stepwise = F)
-sarima_models <- bind_rows(sarima_models, tibble(model="Search: SARIMA(0,0,2)(1,1,2)[12]", lambda=NA, aicc=fit7$aicc))
+fit7 <- auto.arima(y=ts_midwest_soybean, 
+                   stepwise = F)
+sarima_models <- bind_rows(sarima_models, tibble(model="Search: SARIMA(0,0,2)(1,1,2)[12]", 
+                                                 lambda=NA, 
+                                                 aicc=fit7$aicc))
 
 
 ## Box-Cox Transformed Series
 
 ## Configuring a SARIMA model of orders: ARIMA(2,0,0)(1,1,0)[12]  
-fit8 <- Arima(y=ts_midwest_soybean,order=c(2,0,0),seasonal=list(order=c(1,1,0),period=12),method="ML",lambda=boxcox_lambda)
-sarima_models <- bind_rows(sarima_models, tibble(model="SARIMA(2,0,0)(1,1,0)[12]", lambda=fit8$lambda[1], aicc=fit8$aicc))
+fit8 <- Arima(y=ts_midwest_soybean,
+              order=c(2,0,0),
+              seasonal=list(order=c(1,1,0),period=12),
+              method="ML",
+              lambda=boxcox_lambda)
+sarima_models <- bind_rows(sarima_models, tibble(model="SARIMA(2,0,0)(1,1,0)[12]", 
+                                                 lambda=fit8$lambda[1], 
+                                                 aicc=fit8$aicc))
 
 ## Configuring a SARIMA model of orders: ARIMA(0,0,4)(1,1,0)[12]
-fit9 <- Arima(y=ts_midwest_soybean,order=c(0,0,4),seasonal=list(order=c(1,1,0),period=12),method="ML",lambda=boxcox_lambda)
-sarima_models <- bind_rows(sarima_models, tibble(model="SARIMA(0,0,4)(1,1,0)[12]", lambda=fit9$lambda[1], aicc=fit9$aicc))
+fit9 <- Arima(y=ts_midwest_soybean,
+              order=c(0,0,4),
+              seasonal=list(order=c(1,1,0),period=12),
+              method="ML",
+              lambda=boxcox_lambda)
+sarima_models <- bind_rows(sarima_models, tibble(model="SARIMA(0,0,4)(1,1,0)[12]", 
+                                                 lambda=fit9$lambda[1], 
+                                                 aicc=fit9$aicc))
 
 ## Configuring a SARIMA model of orders: ARIMA(2,0,0)(0,1,1)[12]  
-fit10 <- Arima(y=ts_midwest_soybean,order=c(2,0,0),seasonal=list(order=c(0,1,1),period=12),method="ML",lambda=boxcox_lambda)
-sarima_models <- bind_rows(sarima_models, tibble(model="SARIMA(2,0,0)(0,1,1)[12]", lambda=fit10$lambda[1], aicc=fit10$aicc))
+fit10 <- Arima(y=ts_midwest_soybean,
+               order=c(2,0,0),
+               seasonal=list(order=c(0,1,1),period=12),
+               method="ML",
+               lambda=boxcox_lambda)
+sarima_models <- bind_rows(sarima_models, tibble(model="SARIMA(2,0,0)(0,1,1)[12]", 
+                                                 lambda=fit10$lambda[1], 
+                                                 aicc=fit10$aicc))
 
 ## Configuring a SARIMA model of orders: ARIMA(0,0,4)(0,1,1)[12]
-fit11 <- Arima(y=ts_midwest_soybean,order=c(0,0,4),seasonal=list(order=c(0,1,1),period=12),method="ML",lambda=boxcox_lambda)
-sarima_models <- bind_rows(sarima_models, tibble(model="SARIMA(0,0,4)(0,1,1)[12]", lambda=fit11$lambda[1], aicc=fit11$aicc))
+fit11 <- Arima(y=ts_midwest_soybean,
+               order=c(0,0,4),
+               seasonal=list(order=c(0,1,1),period=12),
+               method="ML",
+               lambda=boxcox_lambda)
+sarima_models <- bind_rows(sarima_models, tibble(model="SARIMA(0,0,4)(0,1,1)[12]", 
+                                                 lambda=fit11$lambda[1], 
+                                                 aicc=fit11$aicc))
 
 ##Using auto.arima
 ## Configuring a SARIMA model using auto-arima using setpwise algorithm 
-fit12 <- auto.arima(y=ts_midwest_soybean, stepwise = T, lambda=boxcox_lambda)
-sarima_models <- bind_rows(sarima_models,tibble(model="Stepwise: SARIMA(3,0,0)(0,1,1)[12]",lambda=fit12$lambda[1], aicc=fit12$aicc))
+fit12 <- auto.arima(y=ts_midwest_soybean, 
+                    stepwise = T, 
+                    lambda=boxcox_lambda)
+sarima_models <- bind_rows(sarima_models, tibble(model="Stepwise: SARIMA(3,0,0)(0,1,1)[12]",
+                                                 lambda=fit12$lambda[1], 
+                                                 aicc=fit12$aicc))
 
 ## Configuring a SARIMA model using auto-arima using setpwise algorithm 
-fit13 <- auto.arima(y=ts_midwest_soybean, stepwise = F, lambda=boxcox_lambda)
-sarima_models <- bind_rows(sarima_models,tibble(model="Search: SARIMA(2,0,0)(2,1,1)[12]",lambda=fit13$lambda[1], aicc=fit13$aicc))
+fit13 <- auto.arima(y=ts_midwest_soybean, 
+                    stepwise = F, 
+                    lambda=boxcox_lambda)
+sarima_models <- bind_rows(sarima_models, tibble(model="Search: SARIMA(2,0,0)(2,1,1)[12]",
+                                                 lambda=fit13$lambda[1], 
+                                                 aicc=fit13$aicc))
 
 sarima_models
 ```
@@ -598,6 +740,53 @@ plot(forecast(fit6,h=12))
 plot(forecast(fit12,h=12))
 ```
 
+Looking at the predictions plot, it seems that the SARIMA model without box-cox transformation under predicts the last year (2022) since the peak of the series appears considerably lower in 2022 when compared to 2021. On the other hand, although the plot of the serie considering box-cox transformation appears to be more close to what would be expected, it is noticeable that the confidence interval is considerable larger.  
+
+## Forecasting using Prophet
+
+Another package commonly used for forecasting time series is the **Prophet** package developed by Meta (Facebook) team and it is based on an additive model where non-linear trends are fit with yearly, weekly, and daily seasonality (including holiday effects). In order to compare the performance of the traditional **SARIMA** model with **Prophet**, the soy bean export series without the box-cox transformation will be fit using **Prophet**. 
+
+```{r forecasting_with_prophet, out.width="100%"}
+## Renaming columns in order to match prophet's requirements
+df = rename(midwest_soybean, ds = ref_date_fmd, y = vl_mm_ton)
+
+## Building a time series object with prophet using a multiplicative seasonality model
+m <- prophet(df, seasonality.mode = "multiplicative")
+
+## Creating forecast frame
+future <- make_future_dataframe(m, freq= "month", periods = 12)
+
+## Creating forecast
+forecast = predict(m, future)
+
+## Plotting forecast
+plot(m, forecast)
+```
+
+The package also allow the user to plot the seasonal components from the time series, similarly to models based on time series components like **STL** and **ETS**. The components calculated by **Prophet** are shown bellow.
+
+```{r prophet_components, out.width="100%"}
+## Plotting time series componentes
+prophet_plot_components(m, forecast)
+```
+
+
+It seems that, visually, **Prophet** does a decent job forecasting the next 12 months in the series. However, when calculating the residuals and testing it for white noise, it is noticeable that there are still some correlation left in the residuals (e.g.: lags 1, 2 in the ACF plot) and the p-value obtained with the **Ljung-Box** test is very low, rejecting the null hypothesis which states that the residuals behave like white noise. 
+ 
+
+```{r acf_prophet, out.width="100%"}
+## Calculating the residuals from prophet model
+prophet_residuals = df$y - predict(m)$yhat
+
+## Ljung-Box test in the residuals
+par(mfrow=c(1,1))
+Acf(prophet_residuals, main="ACF of Prophet Residuals | Original Series", xlab="")
+
+## Ljung-Box test in the residuals
+print(x=Box.test(prophet_residuals, lag=12, fitdf=1, type="Ljung-Box"))
+```
+
+
 ## Backtest
 
 ```{r cross_validation}
@@ -605,70 +794,81 @@ plot(forecast(fit12,h=12))
 cv_table = tibble(model=as.character(),lambda=as.numeric(), rmse=as.numeric())
 
 ## Time Series Cross Validation
-rmse_fit6_fw <- tswcv(series=midwest_soybean, x="ref_date_fmd", y="vl_mm_ton", model=fit6, min.window.size=20, window.type="fixed")
-cv_table <- bind_rows(cv_table, tibble(model="Stepwise: SARIMA(0,0,2)(1,1,2)[12]",lambda=fit6$lambda[1], rmse=rmse_fit6_fw$rmse))
+rmse_fit6_fw <- tswcv(series=midwest_soybean, 
+                      x="ref_date_fmd", 
+                      y="vl_mm_ton", 
+                      model=fit6, 
+                      min.window.size=36, 
+                      window.type="fixed")
+cv_table <- bind_rows(cv_table, tibble(model="Stepwise: SARIMA(0,0,2)(1,1,2)[12]",
+                                       lambda=fit6$lambda[1], 
+                                       rmse=rmse_fit6_fw$rmse, 
+                                       window_type="fixed"))
 
-rmse_fit6_vw <- tswcv(series=midwest_soybean, x="ref_date_fmd", y="vl_mm_ton", model=fit6, min.window.size=20, window.type="variable")
-cv_table <- bind_rows(cv_table, tibble(model="Stepwise: SARIMA(0,0,2)(1,1,2)[12]",lambda=fit6$lambda[1], rmse=rmse_fit6_vw$rmse))
+rmse_fit6_vw <- tswcv(series=midwest_soybean, 
+                      x="ref_date_fmd", 
+                      y="vl_mm_ton", 
+                      model=fit6, 
+                      min.window.size=36, 
+                      window.type="variable")
+cv_table <- bind_rows(cv_table, tibble(model="Stepwise: SARIMA(0,0,2)(1,1,2)[12]",
+                                       lambda=fit6$lambda[1], 
+                                       rmse=rmse_fit6_vw$rmse, 
+                                       window_type="variable"))
 
-rmse_fit12_fw <- tswcv(series=midwest_soybean, x="ref_date_fmd", y="vl_mm_ton", model=fit12, min.window.size=20, window.type="fixed")
-cv_table <- bind_rows(cv_table, tibble(model="Stepwise: SARIMA(3,0,0)(0,1,1)[12]",lambda=fit12$lambda[1], rmse=rmse_fit12_fw$rmse))
+rmse_fit12_fw <- tswcv(series=midwest_soybean, 
+                       x="ref_date_fmd", 
+                       y="vl_mm_ton", 
+                       model=fit12, 
+                       min.window.size=36, 
+                       window.type="fixed")
+cv_table <- bind_rows(cv_table, tibble(model="Stepwise: SARIMA(3,0,0)(0,1,1)[12]",
+                                       lambda=fit12$lambda[1], 
+                                       rmse=rmse_fit12_fw$rmse, 
+                                       window_type="fixed"))
 
-rmse_fit12_vw <- tswcv(series=midwest_soybean, x="ref_date_fmd", y="vl_mm_ton", model=fit12, min.window.size=20, window.type="variable")
-cv_table <- bind_rows(cv_table, tibble(model="Stepwise: SARIMA(3,0,0)(0,1,1)[12]",lambda=fit12$lambda[1], rmse=rmse_fit12_vw$rmse))
+rmse_fit12_vw <- tswcv(series=midwest_soybean, 
+                       x="ref_date_fmd", 
+                       y="vl_mm_ton", 
+                       model=fit12, 
+                       min.window.size=36, 
+                       window.type="variable")
+cv_table <- bind_rows(cv_table, tibble(model="Stepwise: SARIMA(3,0,0)(0,1,1)[12]",
+                                       lambda=fit12$lambda[1], 
+                                       rmse=rmse_fit12_vw$rmse, 
+                                       window_type="variable"))
 
+rmse_prophet_fw <- tswcv_prophet(series=midwest_soybean, 
+                                 x="ref_date_fmd", 
+                                 y="vl_mm_ton", 
+                                 min.window.size=36, 
+                                 window.type="fixed")
+cv_table <- bind_rows(cv_table, tibble(model="Prophet",
+                                       lambda=NULL, 
+                                       rmse=rmse_prophet_fw$rmse, 
+                                       window_type="fixed"))
+
+rmse_prophet_vw <- tswcv_prophet(series=midwest_soybean, 
+                                 x="ref_date_fmd", 
+                                 y="vl_mm_ton", 
+                                 min.window.size=36, 
+                                 window.type="variable")
+cv_table <- bind_rows(cv_table, tibble(model="Prophet",
+                                       lambda=NULL, 
+                                       rmse=rmse_prophet_vw$rmse, 
+                                       window_type="variable"))
 
 cv_table
 ```
 
 
-```{r}
-#197 observações (75%) para a base de treino - e 67 (25%) de observações para a base de teste
-#Como estamos trabalhando com ts, primeiro ordenamos e escolhemos as primeiras 197 obs
-#tr <- midwest_soybean_tsibble %>% 
-#          arrange(ref_date_fmd) %>% 
-#          head(197) %>% 
-#          pull(name = 'vl_mm_ton')
+Looking at the RMSE values obtained for all models, it is possible to conclude that the SARIMA model without box-cox transformation has the best performance since it has the lowest RMSE value for both cross-validation approaches: fixed window size and variable window size. Therefore, although it seems to be under predicted the values for the year 2022, the back-test shows that this model performs better in general. The second place would be given to the SARIMA model with box-cox transformation, which has the intermediary performance looking at the RMSE values. It is important to highlight, however, that considering only the cross-validation with fixed window, the RMSE of the SARIMA model with box-cox transformation was really close to the model without the transformation. Finally, the last position would be given to the Prophet model since the RMSE obtained with this model was the highest for all cross-validation methods. This outcome is interesting since this model was shown to not have fully captured all the information present in the series since its residuals are not white noise, therefore it would be expected that this model would have the lowest performance. 
 
-#Como estamos trabalhando com ts, primeiro ordenamos e escolhemos as últimas 67 obs
-#teste <- midwest_soybean_tsibble %>% 
-#          arrange(ref_date_fmd) %>% 
-#          tail(67) %>% 
-#          pull(name = 'vl_mm_ton')
-```
-
-
-```{r}
-#Geramos dois modelos a partir da base de treino
-#Abaixo selecionamos o melhor modelo dos sarimas que testamos (era o modelo 1)
-#fit1 = Arima(tr,order=c(2,0,0),seasonal=list(order=c(2,1,2),period=12),method="ML")
-
-#Abaixo selecionamos o melhor modelo dos Prophet que testamos - ver com o Rodrigo)
-#fit2 = Arima(tr,order=c(1,0,0),seasonal=list(order=c(1,1,0),period=12),method="ML")
-```
-
-
-```{r}
-#Comparando as previsões com a base de teste
-#fazemos então a previsão com o modelo sarima para os próximos 67 meses
-#forecast_01 <- forecast(fit1, h = 67)
-#plot(forecast_01)
-
-#fazemos a previsão com o modelo prophet para os próxmos 67 meses
-#forecast_02 <- forecast(fit2, h = 67)#aqui incluiríamos o modelo prophet
-#plot(forecast_02)
-
-#Comparamos as duas previsões com a base teste para ver qual o melhor modelo
-#accuracy(forecast_01, teste)
-#accuracy(forecast_02, teste)
-```
 
 ### Bibliography
 
-[1] Hyndman, R.J., & Athanasopoulos, G. (2021) Forecasting: principles and practice, 3rd edition, OTexts: Melbourne, Australia. OTexts.com/fpp3. Accessed on 2022-11-01.
+[1] Bodner, C. Box Cox Transformation,  https://harlecin.netlify.app/post/box-cox-and-other-transformations. Acessed on 2022-10-29.
 
-[2] Indicadores Agricultura, Ministério da Agrigultura Brasileiro. https://indicadores.agricultura.gov.br/agrostat/index.htm. Acessed on 2022-10-29.
+[2] Hyndman, R.J., & Athanasopoulos, G. (2021) Forecasting: principles and practice, 3rd edition, OTexts: Melbourne, Australia. OTexts.com/fpp3. Accessed on 2022-11-01.
 
-- https://harlecin.netlify.app/post/box-cox-and-other-transformations/
-
-modeltime r matt
+[3] Indicadores Agricultura, Ministério da Agrigultura Brasileiro. https://indicadores.agricultura.gov.br/agrostat/index.htm. Acessed on 2022-10-29.
